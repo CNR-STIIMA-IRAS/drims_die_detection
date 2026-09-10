@@ -1,5 +1,33 @@
-.venv
-images
-output
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
 
-__pycache__
+# Output files (generated)
+output/
+
+# Images (not tracked — provide your own or download)
+images/rgb/
+images/depth/
+
+# Raw depth numpy files in output
+output/*.npy
+
+# ROS 2 colcon build artifacts
+build/
+install/
+log/
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.idea/
+.vscode/
+*.swp

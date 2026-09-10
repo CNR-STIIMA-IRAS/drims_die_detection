@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""
+ROS 2 Humble launch file for drims_die_detection.
+
+Loads all parameters from config/die_detector_params.yaml and starts the
+die_detector_node.
+
+Usage
+-----
+::
+
+    ros2 launch drims_die_detection die_detector.launch.py
+    ros2 launch drims_die_detection die_detector.launch.py debug:=true
+    ros2 launch drims_die_detection die_detector.launch.py \\
+        rgb_topic:=/my_camera/rgb/image_raw \\
+        depth_topic:=/my_camera/depth/image_rect_raw \\
+        camera_info_topic:=/my_camera/rgb/camera_info
+"""
+
+import os
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+
+def generate_launch_description() -> LaunchDescription:
+    pkg_share = get_package_share_directory("drims_die_detection")
+    default_config = os.path.join(pkg_share, "config", "die_detector_params.yaml")
+
+    # ── Overrideable launch arguments ──────────────────────────────────
+    args = [
+        DeclareLaunchArgument("config",
+                              default_value=default_config,
+                              description="Path to YAML parameter file"),
+        DeclareLaunchArgument("debug",
+                              default_value="false",
+                              description="Enable verbose debug prints"),
+        DeclareLaunchArgument("visualize",
+                              default_value="false",
+                              description="Show cv2.imshow windows (requires display)"),
+        DeclareLaunchArgument("save",
+                              default_value="false",
+                              description="Save output files to disk"),
+        DeclareLaunchArgument("rgb_topic",
+                              default_value="/camera/color/image_raw",
+                              description="RGB image topic"),
+        DeclareLaunchArgument("depth_topic",
+                              default_value="/camera/aligned_depth_to_color/image_raw",
+                              description="Aligned depth image topic"),
+        DeclareLaunchArgument("camera_info_topic",
+                              default_value="/camera/color/camera_info",
+                              description="Camera intrinsics topic"),
+    ]
+
+    node = Node(
+        package="drims_die_detection",
+        executable="die_detector_node.py",
+        name="die_detector_node",
+        output="screen",
+        parameters=[
+            LaunchConfiguration("config"),
+            {
+                "debug":                LaunchConfiguration("debug"),
+                "visualize":            LaunchConfiguration("visualize"),
+                "save":                 LaunchConfiguration("save"),
+                "rgb_topic":            LaunchConfiguration("rgb_topic"),
+                "depth_topic":          LaunchConfiguration("depth_topic"),
+                "camera_info_topic":    LaunchConfiguration("camera_info_topic"),
+            },
+        ],
+    )
+
+    return LaunchDescription(args + [node])
