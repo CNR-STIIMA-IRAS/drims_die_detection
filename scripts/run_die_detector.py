@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth", default=None,
                         help="Path to a matching .npy depth map (metres). "
                              "If omitted, monocular estimation is used.")
-    parser.add_argument("--rgb-dir", default="images/rgb",
+    parser.add_argument("--rgb-dir", default="test_images/rgb",
                         help="Directory of RGB images (used when --image is not set)")
     parser.add_argument("--output-dir", default=None,
                         help="Output directory (overrides config value)")
@@ -139,6 +139,14 @@ def main() -> None:
         depth_paths = [args.depth] if args.depth else [None]
     else:
         rgb_dir = args.rgb_dir
+        if not os.path.isdir(rgb_dir):
+            # Fallback check for images/rgb
+            fallback_dir = os.path.join(_REPO_ROOT, "test_images", "rgb")
+            if os.path.isdir(fallback_dir):
+                rgb_dir = fallback_dir
+            else:
+                rgb_dir = os.path.join(_REPO_ROOT, "images", "rgb")
+
         image_paths = sorted(
             glob.glob(os.path.join(rgb_dir, "*.jpg")) +
             glob.glob(os.path.join(rgb_dir, "*.png"))
@@ -184,19 +192,23 @@ def main() -> None:
         cv2.destroyAllWindows()
 
     # ── Summary ───────────────────────────────────────────────────────
+    ref_frame = params.camera_frame_id
     print("\n" + "=" * 70)
-    print("DETECTION SUMMARY")
+    print(f"DETECTION SUMMARY (Reference Frame: '{ref_frame}')")
     print("=" * 70)
     for r in results:
         pos = r["centroid"]
         q = r["quaternion"]
+        faces = r.get("faces", [])
+        face_pips_str = ", ".join([f"Face {i+1}: {f.get('num_pips', 0)} pips" for i, f in enumerate(faces)]) if faces else "No faces"
         orient = r.get("die_orientation", {})
         fm = orient.get("face_map", {})
         det_status = "FULLY DETERMINED" if orient.get("is_fully_determined") else "PARTIAL (Top Face Only)"
         faces_str = f"Orientation [{det_status}]: +Z(top)={fm.get('+Z')}, -Z(bot)={fm.get('-Z')}, +X={fm.get('+X')}, -X={fm.get('-X')}, +Y={fm.get('+Y')}, -Y={fm.get('-Y')}"
-        print(f"{r['image_name']:<30} | {faces_str} | "
+        print(f"{r['image_name']:<30} | {len(faces)} face(s) [{face_pips_str}] (Total: {r['pip_count']}) | {faces_str} | "
+              f"frame='{ref_frame}' | "
               f"pos=({pos[0]:.3f},{pos[1]:.3f},{pos[2]:.3f}) m | "
-              f"q=[{q[0]:.2f},{q[1]:.2f},{q[2]:.2f},{q[3]:.2f}]")
+              f"q=[{q[0]:.3f},{q[1]:.3f},{q[2]:.3f},{q[3]:.3f}]")
 
 
 if __name__ == "__main__":

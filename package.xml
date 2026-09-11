@@ -8,8 +8,10 @@
     Provides a ROS-free Python library and a ROS 2 Humble node.
   </description>
 
-  <maintainer email="drims@example.com">DRIMS Team</maintainer>
+  <maintainer email="micheleferrari1@cnr.it">Michele Ferrari</maintainer>
   <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
@@ -21,6 +23,7 @@
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-scipy</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-pil</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

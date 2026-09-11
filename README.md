@@ -80,19 +80,26 @@ drims_die_detection/
 
 ## Installation
 
-### Standalone (ROS-free)
+### Standalone (ROS-free) — Automated Setup
+
+You can set up the virtual environment and install all dependencies automatically with a single command:
+
+```bash
+# Automated setup (creates .venv and installs requirements.txt)
+./setup_venv.sh
+
+# Activate virtual environment
+source .venv/bin/activate
+```
+
+Alternatively, install manually using `requirements.txt`:
 
 ```bash
 # 1. Create and activate a virtual environment
 python3 -m venv .venv && source .venv/bin/activate
 
-# 2. Install Python dependencies
-pip install numpy opencv-python scipy pillow pyyaml
-
-# Optional (strongly recommended for better performance):
-pip install open3d                        # faster RANSAC
-pip install torch transformers            # real monocular depth (DPT)
-pip install plotly                        # 3D interactive HTML plots
+# 2. Install all dependencies from requirements.txt
+pip install -r requirements.txt
 ```
 
 ### ROS 2 Humble
@@ -101,16 +108,11 @@ pip install plotly                        # 3D interactive HTML plots
 # 1. Source ROS 2 Humble
 source /opt/ros/humble/setup.bash
 
-# 2. Clone into your colcon workspace src/
-cd ~/ros2_ws/src
-git clone <repo_url> drims_die_detection
+# 2. Install Python dependencies
+pip install -r requirements.txt
 
-# 3. Install Python deps (or rosdep)
-pip install numpy opencv-python scipy pillow pyyaml open3d
-
-# 4. Build the package
-cd ~/ros2_ws
-colcon build --packages-select drims_die_detection
+# 3. Build the package
+colcon build --packages-select drims_die_detection --symlink-install
 source install/setup.bash
 ```
 

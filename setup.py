@@ -23,18 +23,22 @@ setup(
         # rviz config
         (os.path.join("share", package_name, "rviz"),
          glob("rviz/*.rviz")),
+        # test images
+        (os.path.join("share", package_name, "test_images", "rgb"),
+         glob("test_images/rgb/*")),
+        (os.path.join("share", package_name, "test_images", "depth"),
+         glob("test_images/depth/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    maintainer="DRIMS Team",
-    maintainer_email="drims@example.com",
+    maintainer="Michele Ferrari",
+    maintainer_email="micheleferrari1@cnr.it",
     description="3D die detection and 6-DOF pose estimation for angled RGBD cameras.",
     license="MIT",
     tests_require=["pytest"],
-    entry_points={
-        "console_scripts": [
-            "die_detector_node = scripts.die_detector_node:main",
-            "run_die_detector  = scripts.run_die_detector:main",
-        ],
-    },
+    scripts=[
+        "scripts/die_detector_node.py",
+        "scripts/run_die_detector.py",
+        "scripts/rgbd_mock_publisher.py",
+    ],
 )

@@ -101,7 +101,6 @@ class DieDetectorNode(Node):
         # Publishers
         self._pose_pub = self.create_publisher(PoseStamped, p.pose_topic, 10)
         self._panels_pub = self.create_publisher(Image, p.debug_panels_topic, 10)
-        self._topdown_pub = self.create_publisher(Image, p.top_down_topic, 10)
 
         # CameraInfo subscriber (latched once)
         self._info_sub = self.create_subscription(
@@ -183,14 +182,16 @@ class DieDetectorNode(Node):
             self._to_img_msg(collage, stamp, frame_id)
         )
 
-        # Publish top-down crop
-        self._topdown_pub.publish(
-            self._to_img_msg(result["top_down_crop"], stamp, frame_id)
-        )
+        # Detailed logging of pips per face, 3D position, and orientation quaternion
+        faces = result.get("faces", [])
+        face_pips = [f"{f.get('num_pips', 0)} pips" for f in faces]
+        faces_detail_str = ", ".join([f"Face {i+1}: {p}" for i, p in enumerate(face_pips)]) if faces else "No faces"
 
         self.get_logger().info(
-            f"Detected | pips={result['pip_count']} | faces={result['num_visible_faces']} | "
-            f"pos=({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}) m"
+            f"Detected {len(faces)} face(s) [{faces_detail_str}] | Total Pips: {result['pip_count']}\n"
+            f"  Ref Frame       : {frame_id}\n"
+            f"  Position (m)    : x={centroid[0]:.3f}, y={centroid[1]:.3f}, z={centroid[2]:.3f}\n"
+            f"  Orientation (q) : x={quat[0]:.3f}, y={quat[1]:.3f}, z={quat[2]:.3f}, w={quat[3]:.3f}"
         )
 
     # ──────────────────────────────────────────────────────────────────

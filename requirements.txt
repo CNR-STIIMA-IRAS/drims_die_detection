@@ -1,0 +1,9 @@
+numpy<2
+scipy
+opencv-python
+pyyaml
+pillow
+torch
+transformers
+plotly
+open3d

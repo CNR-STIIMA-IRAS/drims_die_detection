@@ -23,6 +23,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition
 from launch_ros.actions import Node
 
 
@@ -44,6 +45,21 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("save",
                               default_value="false",
                               description="Save output files to disk"),
+        DeclareLaunchArgument("rviz",
+                              default_value="false",
+                              description="Launch RViz2 visualizer with die detection profile"),
+        DeclareLaunchArgument("launch_mock_publisher",
+                              default_value="false",
+                              description="Launch RGB-D mock publisher for testing"),
+        DeclareLaunchArgument("image_index",
+                              default_value="0",
+                              description="Select test image by 0-based index (0..8) for mock publisher"),
+        DeclareLaunchArgument("image_name",
+                              default_value="",
+                              description="Select test image by filename for mock publisher"),
+        DeclareLaunchArgument("loop_images",
+                              default_value="false",
+                              description="Loop continuously through all test images if true"),
         DeclareLaunchArgument("rgb_topic",
                               default_value="/camera/color/image_raw",
                               description="RGB image topic"),
@@ -54,6 +70,34 @@ def generate_launch_description() -> LaunchDescription:
                               default_value="/camera/color/camera_info",
                               description="Camera intrinsics topic"),
     ]
+
+    mock_node = Node(
+        package="drims_die_detection",
+        executable="rgbd_mock_publisher.py",
+        name="rgbd_mock_publisher",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("launch_mock_publisher")),
+        parameters=[
+            {
+                "rgb_topic":          LaunchConfiguration("rgb_topic"),
+                "depth_topic":        LaunchConfiguration("depth_topic"),
+                "camera_info_topic":  LaunchConfiguration("camera_info_topic"),
+                "image_index":        LaunchConfiguration("image_index"),
+                "image_name":         LaunchConfiguration("image_name"),
+                "loop":               LaunchConfiguration("loop_images"),
+            }
+        ],
+    )
+
+    rviz_config_path = os.path.join(pkg_share, "rviz", "die_detector.rviz")
+    rviz_node = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        arguments=["-d", rviz_config_path],
+        condition=IfCondition(LaunchConfiguration("rviz")),
+    )
 
     node = Node(
         package="drims_die_detection",
@@ -73,4 +117,4 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    return LaunchDescription(args + [node])
+    return LaunchDescription(args + [mock_node, node, rviz_node])
