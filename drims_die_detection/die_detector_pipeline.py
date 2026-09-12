@@ -118,26 +118,30 @@ class DieDetectorPipeline:
         points, colors, pixel_coords, (cx, cy) = self._pc_proc.create_point_cloud(rgb_bgr, depth_m)
         self._log(f"Step 1: {len(points)} valid 3D points.")
 
-        # ── Step 2: RANSAC Plane ──────────────────────────────────────────
-        plane_model, inliers, outliers, normal = self._pc_proc.fit_plane_ransac(points)
-        A_p, B_p, C_p, D_p = plane_model
-        self._log(f"Step 2: Plane normal={normal}, D={D_p:.4f}.")
-
-        # ── Step 3: 2D RGB Detection ──────────────────────────────────────
+        # ── Step 2: 2D RGB Detection ──────────────────────────────────────
         det = self._rgb_det.detect(rgb_bgr)
         x_c, y_c, w_c, h_c = det["bbox"]
         faces = det["faces"]
         num_visible_faces = det["num_visible_faces"]
         total_pips = det["total_pips"]
-        self._log(f"Step 3: {num_visible_faces} faces, {total_pips} pips (2D).")
+        self._log(f"Step 2: {num_visible_faces} faces, {total_pips} pips (2D).")
+
+        # ── Step 3: RANSAC Plane on Table Surface (Excluding Die Points) ──
+        px = pixel_coords[:, 0]
+        py = pixel_coords[:, 1]
+        is_die_2d = (px >= x_c) & (px < x_c + w_c) & (py >= y_c) & (py < y_c + h_c)
+        table_points = points[~is_die_2d]
+        if len(table_points) < 50:
+            table_points = points
+
+        plane_model, inliers, outliers, normal = self._pc_proc.fit_plane_ransac(table_points)
+        A_p, B_p, C_p, D_p = plane_model
+        self._log(f"Step 3: Plane normal={normal}, D={D_p:.4f} (fit on {len(table_points)} background points).")
 
         # ── Step 4: Die Point Segmentation ────────────────────────────────
         heights = np.dot(points, normal) + D_p
-        px = pixel_coords[:, 0]
-        py = pixel_coords[:, 1]
         inside = (
-            (px >= x_c) & (px < x_c + w_c) &
-            (py >= y_c) & (py < y_c + h_c) &
+            is_die_2d &
             (heights >= self.params.min_die_height_m) &
             (heights <= self.params.max_die_height_m)
         )
@@ -145,8 +149,7 @@ class DieDetectorPipeline:
 
         if len(die_indices) < 10:
             self._log("Height-filtered blob too small — using full 2D bbox fallback.")
-            inside = (px >= x_c) & (px < x_c + w_c) & (py >= y_c) & (py < y_c + h_c)
-            die_indices = np.where(inside)[0]
+            die_indices = np.where(is_die_2d)[0]
 
         die_points = points[die_indices] if len(die_indices) > 0 else points
         self._log(f"Step 4: {len(die_points)} die blob points.")
@@ -188,7 +191,12 @@ class DieDetectorPipeline:
         top_poly_full = (top_face["polygon"] + np.array([x_c, y_c])) if top_face is not None else None
         cam_params = (self.params.fx, self.params.fy, cx, cy)
 
+        def _cy_face(f):
+            M = cv2.moments(f["polygon"])
+            return M["m01"] / M["m00"] if M["m00"] > 0 else float(np.mean(f["polygon"][:, 0, 1]))
+
         lat_faces = [f for f in faces if not f.get("is_top_face")]
+        lat_faces = sorted(lat_faces, key=_cy_face)
         primary_lat = lat_faces[0] if len(lat_faces) > 0 else None
         primary_lat_2d = None
         if primary_lat is not None:
@@ -214,13 +222,14 @@ class DieDetectorPipeline:
             camera_params=cam_params,
         )
 
-        top_pips = top_face["num_pips"] if top_face is not None else total_pips
-        x_pos_pips = primary_lat["num_pips"] if primary_lat is not None else None
-        y_pos_pips = lat_faces[1]["num_pips"] if len(lat_faces) >= 2 else None
+        top_pips = top_face["num_pips"] if (top_face is not None and top_face.get("is_trusted", True)) else total_pips
+        x_pos_pips = primary_lat["num_pips"] if (primary_lat is not None and primary_lat.get("is_trusted", True)) else None
+        y_pos_pips = lat_faces[1]["num_pips"] if (len(lat_faces) >= 2 and lat_faces[1].get("is_trusted", True)) else None
         die_orient = resolve_die_orientation(top_pips=top_pips, x_pos_pips=x_pos_pips, y_pos_pips=y_pos_pips)
 
         top_face_tf = centroid.copy()
         die_centroid_tf = centroid - (die_size / 2.0) * z_ax
+        table_surface_tf = centroid - die_size * z_ax
 
         # ── Step 9: Annotated RGB ─────────────────────────────────────────
         ann_rgb = rgb_bgr.copy()
@@ -238,37 +247,79 @@ class DieDetectorPipeline:
         cv2.circle(ann_rgb, c_2d, 8, (0, 0, 0), -1)
         cv2.circle(ann_rgb, c_2d, 5, (255, 255, 255), -1)
 
-        # Free-area arrow and "TOP FACE" badge for Panel 6 (with larger font)
+        # Validate Top Face and Front Face according to min_pips and max_pips parameters
+        min_p = getattr(self.params, "min_pips", 1)
+        max_p = getattr(self.params, "max_pips", 6)
+
+        def _is_valid(f):
+            if f is None:
+                return False
+            if not f.get("is_trusted", True) or not f.get("aligned_pips", True):
+                return False
+            n = f.get("num_pips", 0)
+            return min_p <= n <= max_p
+
+        top_valid = _is_valid(top_face)
+        front_valid = _is_valid(primary_lat)
+
+        top_pips = top_face.get("num_pips", 0) if top_valid else None
+        front_pips = primary_lat.get("num_pips", 0) if front_valid else None
+
+        top_str = str(top_pips) if top_valid else "None"
+        front_str = str(front_pips) if front_valid else "None"
+
+        badge_text = f"TOP FACE: {top_str} | FRONT FACE: {front_str}"
+
+        # Render larger, high-contrast badge horizontally centered wrt image/panel center
         h_full, w_full = rgb_bgr.shape[:2]
-        free_x = int(w_full * 0.82) if u_top < w_full / 2.0 else int(w_full * 0.18)
-        free_y = int(h_full * 0.82) if v_top < h_full / 2.0 else int(h_full * 0.18)
-        label_pos = (free_x, free_y)
-
-        # Draw high-contrast arrow from free area towards die top face
-        cv2.arrowedLine(ann_rgb, label_pos, c_2d, (0, 0, 0), 5, tipLength=0.03, line_type=cv2.LINE_AA)
-        cv2.arrowedLine(ann_rgb, label_pos, c_2d, (0, 255, 255), 3, tipLength=0.03, line_type=cv2.LINE_AA)
-
-        # Draw larger "TOP FACE" text badge at label_pos
-        text = "TOP FACE"
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 1.2
+        font_scale = 1.1
         thickness = 3
-        (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
 
-        box_x1 = max(5, free_x - tw // 2 - 14)
-        box_y1 = max(5, free_y - th // 2 - 10)
-        box_x2 = min(w_full - 5, free_x + tw // 2 + 14)
-        box_y2 = min(h_full - 5, free_y + th // 2 + 10)
+        (tw, th), baseline = cv2.getTextSize(badge_text, font, font_scale, thickness)
+        max_b_w = w_full - 30
+        if tw > max_b_w:
+            font_scale = font_scale * (max_b_w / float(tw))
+            (tw, th), baseline = cv2.getTextSize(badge_text, font, font_scale, thickness)
 
+        pad_x = 24
+        pad_y = 16
+        box_w = tw + 2 * pad_x
+        box_h = th + 2 * pad_y
+
+        center_x = w_full // 2
+        box_x1 = max(5, center_x - box_w // 2)
+        box_x2 = min(w_full - 5, center_x + box_w // 2)
+
+        box_y2 = h_full - 25
+        box_y1 = max(5, box_y2 - box_h)
+
+        # High contrast background rectangle & border
         cv2.rectangle(ann_rgb, (box_x1, box_y1), (box_x2, box_y2), (15, 15, 15), -1)
-        cv2.rectangle(ann_rgb, (box_x1, box_y1), (box_x2, box_y2), (0, 255, 255), 2)
-        cv2.putText(ann_rgb, text, (box_x1 + 14, box_y2 - 10), font, font_scale, (0, 255, 255), thickness, cv2.LINE_AA)
+        cv2.rectangle(ann_rgb, (box_x1, box_y1), (box_x2, box_y2), (0, 255, 255), 3)
+
+        # Centered crisp text
+        text_x = box_x1 + (box_w - tw) // 2
+        text_y = box_y2 - pad_y
+        cv2.putText(ann_rgb, badge_text, (text_x, text_y), font, font_scale, (0, 255, 255), thickness, cv2.LINE_AA)
+
+        # Arrow from top center of badge box pointing to die top-face 2D centroid
+        arrow_start = (center_x, box_y1)
+        cv2.arrowedLine(ann_rgb, arrow_start, c_2d, (0, 0, 0), 5, tipLength=0.03, line_type=cv2.LINE_AA)
+        cv2.arrowedLine(ann_rgb, arrow_start, c_2d, (0, 255, 255), 3, tipLength=0.03, line_type=cv2.LINE_AA)
 
         self._log(
             f"Step 8: Top-face TF = ({top_face_tf[0]:.3f}, {top_face_tf[1]:.3f}, {top_face_tf[2]:.3f}) m"
         )
 
         result = {
+            # Identification & validation
+            "top_face_str": top_str,
+            "front_face_str": front_str,
+            "top_face_pips": top_pips,
+            "front_face_pips": front_pips,
+            "top_face_valid": top_valid,
+            "front_face_valid": front_valid,
             # Detection
             "image_name": image_name,
             "pip_count": total_pips,
@@ -283,6 +334,7 @@ class DieDetectorPipeline:
             "axes": (x_ax, y_ax, z_ax),
             "top_face_tf": top_face_tf,
             "die_centroid_tf": die_centroid_tf,
+            "table_surface_tf": table_surface_tf,
             # 3D
             "plane_model": plane_model,
             "normal": normal,
@@ -320,41 +372,47 @@ class DieDetectorPipeline:
         ann_rgb = result["annotated_rgb"]
 
         step1_img = ds["step1_color_clustered"]
-        step2_mask = ds["step2_whitest_mask"]
+        step2_edges = ds.get("step2_edges", ds.get("step2_whitest_mask"))
         step2_hull = ds["step2_whitest_convex_hull"]
         bw_mask = ds["step4_bw_mask"]
         dark_mask = ds["step4_dark_pips_mask"]
         faces_pips = ds["step4_faces_and_pips"]
 
-        pw = w // 3
-        ph = h // 2
+        # Fixed high-definition panel canvas resolution for 100% consistent text sizing
+        pw = 640
+        ph = 480
 
-        def _panel(img, label, color=(255, 255, 255)):
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        title_color = (0, 255, 0)
+
+        def _panel(img, label):
             p = cv2.resize(img, (pw, ph))
-            cv2.putText(p, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            # Auto-fit title text so it never overflows panel boundary
+            scale = 0.85
+            thick = 2
+            max_w = pw - 30
+            (tw, _), _ = cv2.getTextSize(label, font, scale, thick)
+            if tw > max_w:
+                scale = scale * (max_w / float(tw))
+            cv2.putText(p, label, (15, 40), font, scale, title_color, thick, cv2.LINE_AA)
             return p
 
-        p1 = _panel(step1_img, "1. Color Clusters (K-Means)")
-        p2 = _panel(step2_mask, "2. Whitest Cluster", (0, 255, 255))
-        p3 = _panel(step2_hull, "3. Whitest Convex Hull", (0, 255, 0))
+        mode_str = getattr(self.params, "detection_mode", "hsv").upper()
 
-        bw_dark = np.hstack((
-            cv2.resize(bw_mask,   (pw // 2, ph)),
-            cv2.resize(dark_mask, (pw - pw // 2, ph)),
-        ))
-        cv2.putText(bw_dark, "4. B&W & Pips Masks", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        p1 = _panel(step1_img, f"1. Color Segment ({mode_str})")
+        p2 = _panel(step2_edges, "2. Edge Detection")
+        p3 = _panel(step2_hull, "3. Convex Hull BBox")
 
-        p5_canvas = np.zeros((ph, pw, 3), dtype=np.uint8)
-        fp_resized = cv2.resize(faces_pips, (min(pw, faces_pips.shape[1] * 2),
-                                             min(ph, faces_pips.shape[0] * 2)))
-        sh, sw = fp_resized.shape[:2]
-        p5_canvas[:sh, :sw] = fp_resized
-        cv2.putText(p5_canvas, "5. Detected Faces & Pips", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        p4_bw = cv2.resize(bw_mask, (pw // 2, ph))
+        p4_dark = cv2.resize(dark_mask, (pw - pw // 2, ph))
+        p4_img = np.hstack((p4_bw, p4_dark))
+        p4 = _panel(p4_img, "4. Face & Pip Masks")
 
+        p5 = _panel(faces_pips, "5. Detected Faces & Pips")
         p6 = _panel(ann_rgb, "6. 3D Pose Frame")
 
         row1 = np.hstack((p1, p2, p3))
-        row2 = np.hstack((bw_dark, p5_canvas, p6))
+        row2 = np.hstack((p4, p5, p6))
         collage = np.vstack((row1, row2))
         return collage
 

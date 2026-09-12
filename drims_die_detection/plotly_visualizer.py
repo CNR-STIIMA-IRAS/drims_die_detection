@@ -158,6 +158,26 @@ class PlotlyVisualizer:
                         name=f"{name_prefix} {ax_name}-axis",
                     ))
 
+        # Transparent fitted table plane surface plot
+        if plane_model is not None and len(plane_model) == 4 and centroid is not None and die_axes is not None:
+            a, b, c, d = plane_model
+            if abs(c) > 1e-4:
+                _, _, z_ax = die_axes
+                tbl_center = centroid - d_size * z_ax
+                cx_p, cy_p = tbl_center[0], tbl_center[1]
+                r = 0.20
+                gx = np.linspace(cx_p - r, cx_p + r, 15)
+                gy = np.linspace(cy_p - r, cy_p + r, 15)
+                GX, GY = np.meshgrid(gx, gy)
+                GZ = (-d - a * GX - b * GY) / c
+                fig.add_trace(go.Surface(
+                    x=GX, y=GY, z=GZ,
+                    colorscale=[[0, "rgba(0, 200, 255, 0.35)"], [1, "rgba(0, 200, 255, 0.35)"]],
+                    showscale=False,
+                    opacity=0.35,
+                    name="Fitted Table Plane",
+                ))
+
         fig.update_layout(
             title=title,
             scene=dict(

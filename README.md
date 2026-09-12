@@ -141,6 +141,17 @@ python scripts/run_die_detector.py \
 python scripts/run_die_detector.py --visualize
 ```
 
+### Interactive Parameter Tuning GUI
+
+To visually tune detection parameters (HSV/LAB color bounds, specular glare threshold, CLAHE clip limit, and pip circularity) under real lighting conditions:
+
+```bash
+# Launch interactive trackbar GUI:
+python scripts/tune_die_detector_gui.py --image test_images/rgb/5834717044920750589.jpg
+```
+- **Live Preview:** View real-time color segmentation and pip detection output.
+- **Save Config:** Press `'s'` or `'S'` in the GUI window to automatically save the tuned parameters directly to `config/die_detector_params.yaml`.
+
 Output files (written to `output/` by default):
 - `detected_<image>.jpg` — 6-panel debug collage
 - `depth_<stem>.npy` — raw metric depth map (float32)

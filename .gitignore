@@ -10,9 +10,10 @@ build/
 # Output files (generated)
 output/
 
-# Images (not tracked — provide your own or download)
-images/rgb/
-images/depth/
+# Images and rosbags (not tracked — provide your own or download)
+test_images/rgb/
+test_images/depth/
+test_bags/
 
 # Raw depth numpy files in output
 output/*.npy

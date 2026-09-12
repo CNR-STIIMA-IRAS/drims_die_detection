@@ -1,53 +1,41 @@
-# die_detector_params.yaml
-# ========================
-# Configuration for the drims_die_detection pipeline.
-# Loaded by DieDetectorParams.from_yaml() (standalone) and by the
-# ROS 2 launch file as /die_detector_node/* parameters.
-#
-# All values shown here are defaults; override only what you need.
-
 die_detector_node:
   ros__parameters:
-
-    # ── Flags ──────────────────────────────────────────────────────────
-    debug: false         # Print verbose step-by-step logs
-    visualize: false     # Show intermediate images via cv2.imshow
-    save: true           # Write output files (collage, depth.npy, plotly HTML)
-
-    # ── Camera intrinsics ──────────────────────────────────────────────
-    # These are overridden dynamically from the CameraInfo topic in ROS mode.
-    # For standalone use, set to your camera's actual values.
+    canny_high_thresh: 130
+    canny_low_thresh: 40
+    camera_info_topic: /camera/color/camera_info
+    clahe_clip_limit: 6.0
+    debug: false
+    debug_panels_topic: /dice/debug_panels
+    depth_model: Intel/dpt-hybrid-midas
+    depth_scale: 0.001
+    depth_topic: /camera/aligned_depth_to_color/image_raw
+    detection_mode: hsv
+    die_color: white
+    die_size_m: 0.05
     fx: 615.0
     fy: 615.0
-    # cx and cy default to image centre when omitted (set to -1 to use default)
-    # cx: 320.0
-    # cy: 240.0
-
-    # ── Depth ──────────────────────────────────────────────────────────
-    depth_model: "Intel/dpt-hybrid-midas"
-    depth_scale: 0.001             # uint16 mm → metres (RealSense default)
-    use_monocular_fallback: true   # Fall back to DPT if depth stream invalid
-
-    # ── RANSAC plane fitting ───────────────────────────────────────────
-    ransac_distance_threshold: 0.015   # metres
+    glare_v_thresh: 198
+    hsv_max:
+    - 105
+    - 55
+    - 255
+    hsv_min:
+    - 80
+    - 0
+    - 94
+    max_die_height_m: 0.065
+    max_pips: 6
+    min_die_height_m: 0.003
+    min_pips: 1
+    num_color_clusters: 5
+    output_dir: output
+    pip_min_circularity: 0.2
+    pose_topic: /dice/pose
+    ransac_distance_threshold: 0.015
     ransac_max_iterations: 1000
-
-    # ── 2D Detection ───────────────────────────────────────────────────
-    die_color: "white"             # Target die body colour
-    num_color_clusters: 5          # K for K-Means colour quantisation
-    die_size_m: 0.050              # Physical die side length (5 cm)
-
-    # ── Height filter (above table plane) ─────────────────────────────
-    min_die_height_m: 0.003        # 3 mm
-    max_die_height_m: 0.065        # 6.5 cm
-
-    # ── Output directory (for standalone mode) ─────────────────────────
-    output_dir: "output"
-
-    # ── ROS topics ─────────────────────────────────────────────────────
-    rgb_topic: "/camera/color/image_raw"
-    depth_topic: "/camera/aligned_depth_to_color/image_raw"
-    camera_info_topic: "/camera/color/camera_info"
-    pose_topic: "/dice/pose"
-    debug_panels_topic: "/dice/debug_panels"
-    top_down_topic: "/dice/top_down"
+    rgb_topic: /camera/color/image_raw
+    save: true
+    service_name: die_identification
+    top_down_topic: /dice/top_down
+    use_monocular_fallback: true
+    visualize: false

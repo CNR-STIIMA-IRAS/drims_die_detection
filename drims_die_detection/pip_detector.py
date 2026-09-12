@@ -90,7 +90,15 @@ class PipDetector:
         h, w = img.shape[:2]
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        clip_limit = getattr(self.params, "clahe_clip_limit", 3.0)
+        min_circ = getattr(self.params, "pip_min_circularity", 0.45)
+        glare_cutoff = getattr(self.params, "glare_v_thresh", 245)
+
+        # Glare mask: exclude blown-out specular highlights from pip detection
+        glare_mask = (gray >= glare_cutoff).astype(np.uint8) * 255
+        glare_mask_dilated = cv2.dilate(glare_mask, np.ones((5, 5), np.uint8))
+
+        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray)
         blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
 
@@ -102,7 +110,9 @@ class PipDetector:
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
-        # Mask out border region
+        # Subtract glare highlights & mask out border region
+        cleaned = cv2.bitwise_and(cleaned, cv2.bitwise_not(glare_mask_dilated))
+
         margin = int(w * 0.08)
         border_mask = np.zeros((h, w), dtype=np.uint8)
         border_mask[margin:h - margin, margin:w - margin] = 255
@@ -124,7 +134,7 @@ class PipDetector:
                 if perim == 0:
                     continue
                 circularity = 4 * math.pi * area / (perim ** 2)
-                if circularity >= 0.45:
+                if circularity >= min_circ:
                     (x, y), radius = cv2.minEnclosingCircle(cnt)
                     center = (int(x), int(y))
                     radius = int(radius)
@@ -142,7 +152,7 @@ class PipDetector:
             params.minArea = min_pip_area
             params.maxArea = max_pip_area
             params.filterByCircularity = True
-            params.minCircularity = 0.4
+            params.minCircularity = min_circ
             params.filterByConvexity = True
             params.minConvexity = 0.5
             params.filterByInertia = True

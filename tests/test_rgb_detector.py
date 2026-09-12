@@ -93,6 +93,28 @@ class TestRGBDieDetectorOutput(unittest.TestCase):
         top_faces = [f for f in res["faces"] if f.get("is_top_face")]
         self.assertEqual(len(top_faces), 1)
 
+    def test_faces_capped_to_max_two(self):
+        img = _make_synthetic_die(w=400, h=300)
+        res = self.det.detect(img)
+        self.assertLessEqual(len(res["faces"]), 2)
+
+    def test_3pips_linearity_check(self):
+        # 1. Collinear 3 pips (diagonal)
+        collinear_pips = [
+            {"center": (10, 10)},
+            {"center": (20, 20)},
+            {"center": (30, 30)},
+        ]
+        self.assertTrue(RGBDieDetector._check_3pips_linearity(collinear_pips))
+
+        # 2. Non-aligned 3 pips (triangle formation)
+        triangle_pips = [
+            {"center": (10, 10)},
+            {"center": (10, 30)},
+            {"center": (30, 10)},
+        ]
+        self.assertFalse(RGBDieDetector._check_3pips_linearity(triangle_pips))
+
 
 if __name__ == "__main__":
     unittest.main()

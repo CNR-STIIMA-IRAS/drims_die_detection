@@ -53,13 +53,10 @@ def generate_launch_description() -> LaunchDescription:
                               description="Launch RGB-D mock publisher for testing"),
         DeclareLaunchArgument("image_index",
                               default_value="0",
-                              description="Select test image by 0-based index (0..8) for mock publisher"),
+                              description="Select test image by 0-based index for mock publisher"),
         DeclareLaunchArgument("image_name",
                               default_value="",
                               description="Select test image by filename for mock publisher"),
-        DeclareLaunchArgument("loop_images",
-                              default_value="false",
-                              description="Loop continuously through all test images if true"),
         DeclareLaunchArgument("rgb_topic",
                               default_value="/camera/color/image_raw",
                               description="RGB image topic"),
@@ -84,7 +81,6 @@ def generate_launch_description() -> LaunchDescription:
                 "camera_info_topic":  LaunchConfiguration("camera_info_topic"),
                 "image_index":        LaunchConfiguration("image_index"),
                 "image_name":         LaunchConfiguration("image_name"),
-                "loop":               LaunchConfiguration("loop_images"),
             }
         ],
     )

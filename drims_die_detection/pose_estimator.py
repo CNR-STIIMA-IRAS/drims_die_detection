@@ -67,8 +67,14 @@ class PoseEstimator:
         axes : (x_axis, y_axis, z_axis) — column unit vectors
         """
         d_size = die_size if die_size is not None else self.params.die_size_m
-        z_axis = plane_normal / np.linalg.norm(plane_normal)
+        z_axis = (plane_normal / np.linalg.norm(plane_normal)).astype(np.float32)
 
+        # Canonical reference direction in table plane: camera +X (1, 0, 0) projected on plane
+        cam_x_proj = np.array([1.0, 0.0, 0.0], dtype=np.float32) - float(z_axis[0]) * z_axis
+        norm_cam_x = np.linalg.norm(cam_x_proj)
+        ref_dir = (cam_x_proj / norm_cam_x).astype(np.float32) if norm_cam_x > 1e-4 else np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+        x_axis: np.ndarray | None = None
         used_backproject = False
 
         if (top_face_polygon is not None and top_face_centroid_2d is not None
@@ -85,38 +91,57 @@ class PoseEstimator:
             t_top = (d_size - plane_D) / dot_rn if abs(dot_rn) > 1e-6 else 1.0
             centroid = (t_top * ray_top).astype(np.float32)
 
-            # Align +X with primary lateral face direction if available, else longest edge
-            if primary_lat_centroid_2d is not None:
-                u_lat, v_lat = primary_lat_centroid_2d
-                edge_2d = np.array([u_lat - u_top, v_lat - v_top], dtype=np.float32)
-            else:
-                edges = [pts[(i + 1) % len(pts)] - pts[i] for i in range(len(pts))]
-                best_idx = int(np.argmax([np.linalg.norm(e) for e in edges]))
-                edge_2d = edges[best_idx].astype(np.float32)
+            # Backproject top face quad vertices to 3D points on table plane
+            pts_3d = []
+            for i in range(len(pts)):
+                u_i, v_i = float(pts[i][0]), float(pts[i][1])
+                ray_i = np.array([(u_i - cx) / fx, (v_i - cy) / fy, 1.0], dtype=np.float32)
+                dot_i = float(np.dot(ray_i, z_axis))
+                t_i = (d_size - plane_D) / dot_i if abs(dot_i) > 1e-6 else 1.0
+                pts_3d.append(t_i * ray_i)
 
-            edge_norm = np.linalg.norm(edge_2d)
+            # Compute principal quad edge directions in 3D
+            candidate_dirs = []
+            N = len(pts_3d)
+            for i in range(N):
+                e = pts_3d[(i + 1) % N] - pts_3d[i]
+                e_proj = e - np.dot(e, z_axis) * z_axis
+                e_len = np.linalg.norm(e_proj)
+                if e_len > 1e-4:
+                    candidate_dirs.append(e_proj / e_len)
 
-            if edge_norm > 1e-3:
-                d_2d = edge_2d / edge_norm
-                u_e, v_e = u_top + 20.0 * d_2d[0], v_top + 20.0 * d_2d[1]
-                ray_e = np.array([(u_e - cx) / fx, (v_e - cy) / fy, 1.0], dtype=np.float32)
-                dot_e = float(np.dot(ray_e, z_axis))
-                t_e = (d_size - plane_D) / dot_e if abs(dot_e) > 1e-6 else 1.0
-                pt_e = (t_e * ray_e).astype(np.float32)
+            if candidate_dirs:
+                # Target vector for alignment
+                target_dir = ref_dir
+                if primary_lat_centroid_2d is not None:
+                    u_lat, v_lat = primary_lat_centroid_2d
+                    edge_2d = np.array([u_lat - u_top, v_lat - v_top], dtype=np.float32)
+                    edge_norm = np.linalg.norm(edge_2d)
+                    if edge_norm > 1e-3:
+                        d_2d = edge_2d / edge_norm
+                        u_e, v_e = u_top + 20.0 * d_2d[0], v_top + 20.0 * d_2d[1]
+                        ray_e = np.array([(u_e - cx) / fx, (v_e - cy) / fy, 1.0], dtype=np.float32)
+                        t_e = (d_size - plane_D) / float(np.dot(ray_e, z_axis)) if abs(np.dot(ray_e, z_axis)) > 1e-6 else 1.0
+                        pt_e = t_e * ray_e
+                        v_3d = pt_e - centroid
+                        x_raw = v_3d - np.dot(v_3d, z_axis) * z_axis
+                        if np.linalg.norm(x_raw) > 1e-4:
+                            target_dir = x_raw / np.linalg.norm(x_raw)
 
-                v_3d = pt_e - centroid
-                x_raw = v_3d - np.dot(v_3d, z_axis) * z_axis
-                x_norm = np.linalg.norm(x_raw)
+                # Pick quad edge vector closest to target_dir
+                best_score = -1e9
+                for cd in candidate_dirs:
+                    for sign in (1.0, -1.0):
+                        v_test = (sign * cd).astype(np.float32)
+                        score = float(np.dot(v_test, target_dir))
+                        if score > best_score:
+                            best_score = score
+                            x_axis = v_test
+                            used_backproject = True
 
-                if x_norm > 1e-4:
-                    x_axis = (x_raw / x_norm).astype(np.float32)
-                    y_axis = np.cross(z_axis, x_axis).astype(np.float32)
-                    y_axis /= np.linalg.norm(y_axis)
-                    used_backproject = True
-
-        if not used_backproject:
+        if not used_backproject or x_axis is None:
             self._log("Using PCA fallback for pose estimation.")
-            centroid = (np.mean(die_points, axis=0) if len(die_points) > 0
+            centroid = (np.mean(die_points, axis=0).astype(np.float32) if len(die_points) > 0
                         else np.array([0.0, 0.0, 1.0], dtype=np.float32))
             aligned = np.dot(die_points - centroid, R_plane.T)
             xy_pts = aligned[:, :2].astype(np.float32)
@@ -125,21 +150,21 @@ class PoseEstimator:
                 cov = np.cov(xy_pts, rowvar=False)
                 _, evecs = np.linalg.eigh(cov)
                 v1_2d = evecs[:, 1]
-                v2_2d = evecs[:, 0]
             else:
                 v1_2d = np.array([1.0, 0.0], dtype=np.float32)
-                v2_2d = np.array([0.0, 1.0], dtype=np.float32)
 
             R_inv = R_plane.T
             x_axis = np.dot(R_inv, np.array([v1_2d[0], v1_2d[1], 0.0], np.float32))
-            y_axis = np.dot(R_inv, np.array([v2_2d[0], v2_2d[1], 0.0], np.float32))
+            x_axis = x_axis - np.dot(x_axis, z_axis) * z_axis
+            x_axis /= np.linalg.norm(x_axis)
+            if np.dot(x_axis, ref_dir) < 0:
+                x_axis = -x_axis
 
-        x_axis = (x_axis / np.linalg.norm(x_axis)).astype(np.float32)
-        y_axis = (y_axis / np.linalg.norm(y_axis)).astype(np.float32)
-
-        z_calc = np.cross(x_axis, y_axis)
-        if np.dot(z_calc, z_axis) < 0:
-            y_axis = -y_axis
+        # Ensure orthonormal right-handed frame (z = plane_normal, y = z × x, x = y × z)
+        y_axis = np.cross(z_axis, x_axis).astype(np.float32)
+        y_axis /= np.linalg.norm(y_axis)
+        x_axis = np.cross(y_axis, z_axis).astype(np.float32)
+        x_axis /= np.linalg.norm(x_axis)
 
         R_die = np.stack((x_axis, y_axis, z_axis), axis=1).astype(np.float32)
         quat = R_sci.from_matrix(R_die).as_quat()   # [qx, qy, qz, qw]

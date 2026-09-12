@@ -27,12 +27,22 @@ try:
     from rclpy.node import Node
     from sensor_msgs.msg import Image, CameraInfo
     from geometry_msgs.msg import PoseStamped, TransformStamped
+    from visualization_msgs.msg import Marker
+    from rcl_interfaces.msg import SetParametersResult
     from tf2_ros import TransformBroadcaster
     from cv_bridge import CvBridge
     import message_filters
     HAS_ROS2 = True
+    try:
+        from easy_motion_msgs.srv import DieIdentification3D
+        HAS_EASY_MOTION_MSGS = True
+    except ImportError:
+        HAS_EASY_MOTION_MSGS = False
+        DieIdentification3D = None
 except ImportError:
     HAS_ROS2 = False
+    HAS_EASY_MOTION_MSGS = False
+    DieIdentification3D = None
 
 # The die detection library is always importable regardless of ROS
 import os
@@ -69,6 +79,16 @@ class DieDetectorNode(Node):
             die_color=_declare_and_get(self, "die_color", "white"),
             num_color_clusters=_declare_and_get(self, "num_color_clusters", 5),
             die_size_m=_declare_and_get(self, "die_size_m", 0.050),
+            detection_mode=_declare_and_get(self, "detection_mode", "hsv"),
+            hsv_min=_declare_and_get(self, "hsv_min", [0, 0, 150]),
+            hsv_max=_declare_and_get(self, "hsv_max", [180, 80, 255]),
+            glare_v_thresh=_declare_and_get(self, "glare_v_thresh", 245),
+            clahe_clip_limit=_declare_and_get(self, "clahe_clip_limit", 3.0),
+            pip_min_circularity=_declare_and_get(self, "pip_min_circularity", 0.45),
+            canny_low_thresh=_declare_and_get(self, "canny_low_thresh", 40),
+            canny_high_thresh=_declare_and_get(self, "canny_high_thresh", 130),
+            min_pips=_declare_and_get(self, "min_pips", 1),
+            max_pips=_declare_and_get(self, "max_pips", 6),
             min_die_height_m=_declare_and_get(self, "min_die_height_m", 0.003),
             max_die_height_m=_declare_and_get(self, "max_die_height_m", 0.065),
             output_dir=_declare_and_get(self, "output_dir", "output"),
@@ -80,12 +100,17 @@ class DieDetectorNode(Node):
             pose_topic=_declare_and_get(self, "pose_topic", "/dice/pose"),
             debug_panels_topic=_declare_and_get(self, "debug_panels_topic", "/dice/debug_panels"),
             top_down_topic=_declare_and_get(self, "top_down_topic", "/dice/top_down"),
+            service_name=_declare_and_get(self, "service_name", "die_identification"),
         )
         self._params = p
         p.log(self.get_logger())
 
+        # Parameter change callback
+        self.add_on_set_parameters_callback(self._on_param_change)
+
         # ── Pipeline ───────────────────────────────────────────────────
         self._pipeline = DieDetectorPipeline(p)
+        self._last_result: dict | None = None
 
         # ── ROS infrastructure ─────────────────────────────────────────
         self._bridge = CvBridge()
@@ -101,6 +126,17 @@ class DieDetectorNode(Node):
         # Publishers
         self._pose_pub = self.create_publisher(PoseStamped, p.pose_topic, 10)
         self._panels_pub = self.create_publisher(Image, p.debug_panels_topic, 10)
+        self._plane_marker_pub = self.create_publisher(Marker, "/dice/fitted_plane_marker", 10)
+
+        # Service
+        if HAS_EASY_MOTION_MSGS and DieIdentification3D is not None:
+            self._service = self.create_service(
+                DieIdentification3D, p.service_name, self._die_identification_cb
+            )
+            self.get_logger().info(f"Die identification service '{p.service_name}' ready.")
+        else:
+            self.get_logger().error(f"Die identification service '{p.service_name}' not available.")
+            self._service = None
 
         # CameraInfo subscriber (latched once)
         self._info_sub = self.create_subscription(
@@ -159,6 +195,7 @@ class DieDetectorNode(Node):
         # Run pipeline
         try:
             result = self._pipeline.process_rgbd(rgb, depth_m)
+            self._last_result = result
         except Exception as exc:
             self.get_logger().error(f"Pipeline error: {exc}")
             return
@@ -175,6 +212,10 @@ class DieDetectorNode(Node):
         self._broadcast_tf("die_top_face", centroid, quat, stamp, frame_id)
         die_c = result["die_centroid_tf"]
         self._broadcast_tf("die_centroid", die_c, quat, stamp, frame_id)
+
+        # Publish transparent fitted plane marker on table surface for RViz 3D visualization
+        table_tf = result.get("table_surface_tf", centroid)
+        self._publish_plane_marker(table_tf, quat, stamp, frame_id)
 
         # Publish 6-panel debug collage
         collage = self._pipeline.build_debug_panels(rgb, result)
@@ -208,6 +249,31 @@ class DieDetectorNode(Node):
         msg.pose.orientation.w = float(quat[3])
         self._pose_pub.publish(msg)
 
+    def _publish_plane_marker(self, centroid, quat, stamp, frame_id) -> None:
+        """Publish transparent fitted plane surface marker to RViz."""
+        marker = Marker()
+        marker.header.stamp = stamp
+        marker.header.frame_id = frame_id
+        marker.ns = "fitted_plane"
+        marker.id = 0
+        marker.type = Marker.CUBE
+        marker.action = Marker.ADD
+        marker.pose.position.x = float(centroid[0])
+        marker.pose.position.y = float(centroid[1])
+        marker.pose.position.z = float(centroid[2])
+        marker.pose.orientation.x = float(quat[0])
+        marker.pose.orientation.y = float(quat[1])
+        marker.pose.orientation.z = float(quat[2])
+        marker.pose.orientation.w = float(quat[3])
+        marker.scale.x = 0.40  # 40 cm width
+        marker.scale.y = 0.40  # 40 cm length
+        marker.scale.z = 0.002 # 2 mm thin surface sheet
+        marker.color.r = 0.0
+        marker.color.g = 0.8
+        marker.color.b = 1.0
+        marker.color.a = 0.35  # Transparent
+        self._plane_marker_pub.publish(marker)
+
     def _broadcast_tf(self, child_id, translation, quat, stamp, frame_id) -> None:
         t = TransformStamped()
         t.header.stamp = stamp
@@ -227,6 +293,66 @@ class DieDetectorNode(Node):
         msg.header.stamp = stamp
         msg.header.frame_id = frame_id
         return msg
+
+    def _die_identification_cb(self, request, response):
+        """ROS 2 service handler returning top face, front face, and die top TF."""
+        if self._last_result is None:
+            response.top_face = "None"
+            response.front_face = "None"
+            response.top_face_pips = 0
+            response.front_face_pips = 0
+            response.success = False
+            return response
+
+        res = self._last_result
+        top_str = res.get("top_face_str", "None")
+        front_str = res.get("front_face_str", "None")
+        top_pips = res.get("top_face_pips", None)
+        front_pips = res.get("front_face_pips", None)
+
+        centroid = res["centroid"]
+        quat = res["quaternion"]
+        stamp = self.get_clock().now().to_msg()
+        frame_id = self._params.camera_frame_id
+
+        # Populate die_top_tf (TransformStamped)
+        response.die_top_tf.header.stamp = stamp
+        response.die_top_tf.header.frame_id = frame_id
+        response.die_top_tf.child_frame_id = "die_top_face"
+        response.die_top_tf.transform.translation.x = float(centroid[0])
+        response.die_top_tf.transform.translation.y = float(centroid[1])
+        response.die_top_tf.transform.translation.z = float(centroid[2])
+        response.die_top_tf.transform.rotation.x = float(quat[0])
+        response.die_top_tf.transform.rotation.y = float(quat[1])
+        response.die_top_tf.transform.rotation.z = float(quat[2])
+        response.die_top_tf.transform.rotation.w = float(quat[3])
+
+        # Populate die_top_pose (PoseStamped)
+        response.die_top_pose.header.stamp = stamp
+        response.die_top_pose.header.frame_id = frame_id
+        response.die_top_pose.pose.position.x = float(centroid[0])
+        response.die_top_pose.pose.position.y = float(centroid[1])
+        response.die_top_pose.pose.position.z = float(centroid[2])
+        response.die_top_pose.pose.orientation.x = float(quat[0])
+        response.die_top_pose.pose.orientation.y = float(quat[1])
+        response.die_top_pose.pose.orientation.z = float(quat[2])
+        response.die_top_pose.pose.orientation.w = float(quat[3])
+
+        response.top_face = str(top_str)
+        response.front_face = str(front_str)
+        response.top_face_pips = int(top_pips) if top_pips is not None else 0
+        response.front_face_pips = int(front_pips) if front_pips is not None else 0
+        response.success = True
+        return response
+
+    def _on_param_change(self, params) -> SetParametersResult:
+        """Dynamic ROS 2 parameter update callback."""
+        for p in params:
+            if hasattr(self._params, p.name):
+                val = list(p.value) if hasattr(p.value, '__iter__') and not isinstance(p.value, (str, bytes)) else p.value
+                setattr(self._params, p.name, val)
+                self.get_logger().info(f"Dynamic param update: {p.name} = {val}")
+        return SetParametersResult(successful=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────

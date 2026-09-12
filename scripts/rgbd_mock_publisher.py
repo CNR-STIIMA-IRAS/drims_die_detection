@@ -24,6 +24,7 @@ Usage:
 import os
 import sys
 import glob
+import re
 import numpy as np
 import cv2
 
@@ -58,7 +59,6 @@ class RGBDMockPublisher(Node):
         # Image selection parameters
         self.declare_parameter("image_index", 0)
         self.declare_parameter("image_name", "")
-        self.declare_parameter("loop", False)
 
         self.declare_parameter("fx", 615.0)
         self.declare_parameter("fy", 615.0)
@@ -75,7 +75,6 @@ class RGBDMockPublisher(Node):
 
         self._image_index = int(self.get_parameter("image_index").value)
         self._image_name = str(self.get_parameter("image_name").value)
-        self._loop = bool(self.get_parameter("loop").value)
 
         self._fx = float(self.get_parameter("fx").value)
         self._fy = float(self.get_parameter("fy").value)
@@ -85,25 +84,18 @@ class RGBDMockPublisher(Node):
         # ── Locate test_images ──────────────────────────────────────────
         user_dir = str(self.get_parameter("test_images_dir").value)
         self._rgb_files = []
-        self._loop_idx = 0
+
+        def _natural_key(filepath: str):
+            filename = os.path.basename(filepath)
+            return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', filename)]
 
         search_dirs = []
         if user_dir:
             search_dirs.append(user_dir)
 
-        # 1. Package share directory
-        try:
-            share_dir = get_package_share_directory("drims_die_detection")
-            search_dirs.append(os.path.join(share_dir, "test_images"))
-        except Exception:
-            pass
-
-        # 2. Standard workspace paths
-        search_dirs.append("/home/ws/src/drims_die_detection/test_images")
-        search_dirs.append("/home/ws/src/drims_cells/test_images")
-
-        # 3. Traverse parent directories from current file
-        curr_dir = os.path.dirname(os.path.abspath(__file__))
+        # 1. Traverse parent directories from current file (prioritize source repository)
+        script_file = os.path.realpath(__file__)
+        curr_dir = os.path.dirname(script_file)
         for _ in range(5):
             search_dirs.append(os.path.join(curr_dir, "test_images"))
             search_dirs.append(os.path.join(curr_dir, "src", "drims_die_detection", "test_images"))
@@ -112,15 +104,29 @@ class RGBDMockPublisher(Node):
                 break
             curr_dir = parent
 
+        # 2. Standard workspace / container paths
+        search_dirs.append("/home/ws/src/drims_die_detection/test_images")
+        search_dirs.append("/home/ws/src/drims_cells/test_images")
+
+        # 3. Package share directory (fallback)
+        try:
+            share_dir = get_package_share_directory("drims_die_detection")
+            search_dirs.append(os.path.join(share_dir, "test_images"))
+        except Exception:
+            pass
+
+        valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
         found_dir = None
         for s_dir in search_dirs:
             rgb_path = os.path.join(s_dir, "rgb")
             if os.path.isdir(rgb_path):
-                files = sorted(
-                    glob.glob(os.path.join(rgb_path, "*.jpg")) +
-                    glob.glob(os.path.join(rgb_path, "*.png"))
-                )
+                files = [
+                    os.path.join(rgb_path, fname)
+                    for fname in os.listdir(rgb_path)
+                    if os.path.splitext(fname)[1].lower() in valid_exts
+                ]
                 if files:
+                    files.sort(key=_natural_key)
                     self._rgb_files = files
                     found_dir = rgb_path
                     self.get_logger().info(f"Loaded {len(files)} test images from: {rgb_path}")
@@ -150,7 +156,7 @@ class RGBDMockPublisher(Node):
 
         self.get_logger().info(
             f"Publishing mock RGB-D stream at {self._rate:.1f} Hz\n"
-            f"  Image Selection: index={self._image_index}, name='{self._image_name}', loop={self._loop}\n"
+            f"  Image Selection: index={self._image_index}, name='{self._image_name}'\n"
             f"  RGB: {self._rgb_topic}\n"
             f"  Depth: {self._depth_topic} (16UC1)\n"
             f"  Points: {self._points_topic} (PointCloud2)\n"
@@ -166,9 +172,6 @@ class RGBDMockPublisher(Node):
             elif param.name == "image_name":
                 self._image_name = str(param.value)
                 self.get_logger().info(f"Selected image_name updated to: '{self._image_name}'")
-            elif param.name == "loop":
-                self._loop = bool(param.value)
-                self.get_logger().info(f"Loop mode updated to: {self._loop}")
         return SetParametersResult(successful=True)
 
     def _build_camera_info(self, width: int, height: int) -> CameraInfo:
@@ -245,27 +248,29 @@ class RGBDMockPublisher(Node):
     def _load_selected_frame(self):
         """Load selected RGB and matching Depth image pair from disk."""
         if not self._rgb_files:
+            self.get_logger().error("No test images available in test_images/rgb!")
             return None, None
 
         target_file = None
-        if self._loop:
-            target_file = self._rgb_files[self._loop_idx]
-            self._loop_idx = (self._loop_idx + 1) % len(self._rgb_files)
-        elif self._image_name:
+        if self._image_name:
             for f in self._rgb_files:
                 b_name = os.path.basename(f)
                 if self._image_name in b_name or b_name.startswith(self._image_name):
                     target_file = f
                     break
             if not target_file:
-                self.get_logger().warn(
-                    f"Image '{self._image_name}' not found. Falling back to index {self._image_index}"
+                self.get_logger().error(
+                    f"Image '{self._image_name}' not found among {len(self._rgb_files)} test images."
                 )
-                idx = self._image_index % len(self._rgb_files)
-                target_file = self._rgb_files[idx]
+                return None, None
         else:
-            idx = self._image_index % len(self._rgb_files)
-            target_file = self._rgb_files[idx]
+            if 0 <= self._image_index < len(self._rgb_files):
+                target_file = self._rgb_files[self._image_index]
+            else:
+                self.get_logger().error(
+                    f"Image index {self._image_index} is out of range (valid range: 0 .. {len(self._rgb_files) - 1})."
+                )
+                return None, None
 
         rgb = cv2.imread(target_file)
         if rgb is None:

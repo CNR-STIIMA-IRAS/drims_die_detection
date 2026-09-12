@@ -106,6 +106,16 @@ class DieDetectorParams:
     die_color: str = "white"
     num_color_clusters: int = 5
     die_size_m: float = 0.050           # 5 cm standard die
+    detection_mode: str = "hsv"         # "hsv", "kmeans"
+    hsv_min: list[int] = field(default_factory=lambda: [0, 0, 150])
+    hsv_max: list[int] = field(default_factory=lambda: [180, 80, 255])
+    glare_v_thresh: int = 245
+    clahe_clip_limit: float = 3.0
+    pip_min_circularity: float = 0.45
+    canny_low_thresh: int = 40
+    canny_high_thresh: int = 130
+    min_pips: int = 1
+    max_pips: int = 6
 
     # ── Clustering / height filter ─────────────────────────────────────────
     min_die_height_m: float = 0.003     # 3 mm above table
@@ -114,13 +124,14 @@ class DieDetectorParams:
     # ── Output ─────────────────────────────────────────────────────────────
     output_dir: str = "output"
 
-    # ── ROS topics (used only by die_detector_node) ────────────────────────
+    # ── ROS topics & services (used only by die_detector_node) ─────────────
     rgb_topic: str = "/camera/color/image_raw"
     depth_topic: str = "/camera/aligned_depth_to_color/image_raw"
     camera_info_topic: str = "/camera/color/camera_info"
     pose_topic: str = "/dice/pose"
     debug_panels_topic: str = "/dice/debug_panels"
     top_down_topic: str = "/dice/top_down"
+    service_name: str = "die_identification"
 
     # ── Internal (not in YAML) ─────────────────────────────────────────────
     camera_frame_id: str = "camera_color_optical_frame"

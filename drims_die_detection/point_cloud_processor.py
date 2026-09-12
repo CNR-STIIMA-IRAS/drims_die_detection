@@ -115,30 +115,23 @@ class PointCloudProcessor:
             ransac_n=3,
             num_iterations=max_iter,
         )
-        A, B, C, D = plane_model
-        all_idx = set(range(len(points)))
-        outliers = list(all_idx - set(inliers))
-
-        normal = np.array([A, B, C], dtype=np.float32)
-        norm_val = np.linalg.norm(normal)
-        if norm_val > 0:
-            normal /= norm_val
-            D /= norm_val
-        if normal[2] > 0:          # ensure normal points toward camera
-            normal = -normal
-            D = -D
-
-        self._log(f"RANSAC (Open3D): {len(inliers)} inliers, normal={normal}.")
-        return (normal[0], normal[1], normal[2], D), inliers, outliers, normal
+        # SVD refinement on Open3D inliers
+        return self._refine_plane_svd(points, inliers, dist_thresh)
 
     def _ransac_numpy(self, points, dist_thresh, max_iter):
         num_points = len(points)
-        best_inliers: list = []
-        best_plane = None
+        if num_points < 3:
+            normal = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+            return (0.0, 0.0, -1.0, 0.0), list(range(num_points)), [], normal
 
         # Subsample for speed
         sub_idx = np.random.choice(num_points, size=min(10_000, num_points), replace=False)
         sub_pts = points[sub_idx]
+
+        best_cost = 1e18
+        best_inliers = []
+
+        sq_thresh = dist_thresh ** 2
 
         for _ in range(max_iter):
             idx = np.random.choice(len(sub_pts), 3, replace=False)
@@ -151,30 +144,53 @@ class PointCloudProcessor:
             n /= norm_n
             d = -np.dot(n, p1)
 
+            # MSAC scoring (M-estimator cost truncated at dist_thresh^2)
             distances = np.abs(np.dot(sub_pts, n) + d)
-            inliers = np.where(distances < dist_thresh)[0]
-            if len(inliers) > len(best_inliers):
-                best_inliers = inliers
-                best_plane = (n[0], n[1], n[2], d)
+            cost = float(np.sum(np.minimum(distances ** 2, sq_thresh)))
+            if cost < best_cost:
+                best_cost = cost
+                best_inliers = np.where(np.abs(np.dot(points, n) + d) < dist_thresh)[0]
 
-        if best_plane is None:
+        if len(best_inliers) < 3:
             self._log("RANSAC failed; returning horizontal fallback plane.")
-            normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-            return (0.0, 0.0, 1.0, -1.0), [], list(range(num_points)), normal
+            normal = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+            return (0.0, 0.0, -1.0, -1.0), [], list(range(num_points)), normal
 
-        n_vec = np.array(best_plane[:3], dtype=np.float32)
-        d_val = float(best_plane[3])
+        # SVD refinement on MSAC inliers
+        return self._refine_plane_svd(points, best_inliers, dist_thresh)
 
-        dists_all = np.abs(np.dot(points, n_vec) + d_val)
-        inliers_all = np.where(dists_all < dist_thresh)[0]
-        outliers_all = np.where(dists_all >= dist_thresh)[0]
+    def _refine_plane_svd(self, points, initial_inliers, dist_thresh, passes=3):
+        """Refine plane normal and D using Total Least Squares (SVD) on inlier set."""
+        curr_inliers = initial_inliers
+        n_vec = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+        d_val = 0.0
+
+        for _ in range(passes):
+            if len(curr_inliers) < 3:
+                break
+            inlier_pts = points[curr_inliers]
+            centroid = np.mean(inlier_pts, axis=0)
+            centered = inlier_pts - centroid
+            cov = np.dot(centered.T, centered)
+            evals, evecs = np.linalg.eigh(cov)
+            n_vec = evecs[:, 0].astype(np.float32)
+            norm_val = np.linalg.norm(n_vec)
+            if norm_val > 0:
+                n_vec /= norm_val
+            d_val = float(-np.dot(n_vec, centroid))
+            dists = np.abs(np.dot(points, n_vec) + d_val)
+            curr_inliers = np.where(dists < dist_thresh)[0]
 
         if n_vec[2] > 0:
             n_vec = -n_vec
             d_val = -d_val
 
-        self._log(f"RANSAC (NumPy): {len(inliers_all)} inliers, normal={n_vec}.")
-        return (n_vec[0], n_vec[1], n_vec[2], d_val), inliers_all, outliers_all, n_vec
+        dists_final = np.abs(np.dot(points, n_vec) + d_val)
+        inliers_final = np.where(dists_final < dist_thresh)[0]
+        outliers_final = np.where(dists_final >= dist_thresh)[0]
+
+        self._log(f"RANSAC + SVD Refinement: {len(inliers_final)} inliers, normal={n_vec}.")
+        return (float(n_vec[0]), float(n_vec[1]), float(n_vec[2]), d_val), inliers_final, outliers_final, n_vec
 
     def _make_logger(self):
         tag = "[PointCloudProcessor]"
