@@ -104,6 +104,8 @@ class DieDetectorPipeline:
         -------
         dict with detection results (see module docstring).
         """
+        if depth_m.ndim == 3:
+            depth_m = depth_m[:, :, 0]
         h, w = rgb_bgr.shape[:2]
         self._log(f"process_rgbd: image={image_name} ({w}×{h})")
 
@@ -424,29 +426,30 @@ class DieDetectorPipeline:
         depth_m: np.ndarray | None = None,
     ) -> None:
         """Save the 6-panel collage, the depth colourmap, and the Plotly HTML."""
-        os.makedirs(self.params.output_dir, exist_ok=True)
+        out_dir = self.params.resolved_output_dir
+        os.makedirs(out_dir, exist_ok=True)
         img_name = result.get("image_name", "image")
         stem = os.path.splitext(img_name)[0]
 
         # 6-panel collage
-        collage_path = os.path.join(self.params.output_dir, f"detected_{img_name}")
+        collage_path = os.path.join(out_dir, f"detected_{img_name}")
         cv2.imwrite(collage_path, collage)
         self._log(f"Saved collage → {collage_path}")
 
         # Depth files (raw .npy + colourmap PNG)
         if depth_m is not None:
-            depth_npy_path = os.path.join(self.params.output_dir, f"depth_{stem}.npy")
+            depth_npy_path = os.path.join(out_dir, f"depth_{stem}.npy")
             np.save(depth_npy_path, depth_m)
             self._log(f"Saved raw depth → {depth_npy_path}")
 
             depth_vis = cv2.normalize(depth_m, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
             depth_color = cv2.applyColorMap(depth_vis, cv2.COLORMAP_VIRIDIS)
-            depth_png_path = os.path.join(self.params.output_dir, f"depth_{stem}.png")
+            depth_png_path = os.path.join(out_dir, f"depth_{stem}.png")
             cv2.imwrite(depth_png_path, depth_color)
             self._log(f"Saved depth colourmap → {depth_png_path}")
 
         # Plotly HTML
-        plotly_path = os.path.join(self.params.output_dir, f"plotly_3d_{stem}.html")
+        plotly_path = os.path.join(out_dir, f"plotly_3d_{stem}.html")
         x_ax, y_ax, z_ax = result["axes"]
         self._plotly.visualize(
             points=result["points"],

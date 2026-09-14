@@ -18,6 +18,14 @@ import numpy as np
 from .die_detector_params import DieDetectorParams
 
 
+def safe_find_contours(img, mode, method):
+    """Find contours compatibly across OpenCV 3.x, 4.x, and 5.x."""
+    res = cv2.findContours(img, mode, method)
+    if len(res) == 2:
+        return res[0], res[1]
+    return res[1], res[2]
+
+
 class PipDetector:
     """Detects and counts pips on a die face crop.
 
@@ -118,7 +126,7 @@ class PipDetector:
         border_mask[margin:h - margin, margin:w - margin] = 255
         cleaned = cv2.bitwise_and(cleaned, border_mask)
 
-        contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = safe_find_contours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         die_area = w * h
         min_pip_area = die_area * 0.003
         max_pip_area = die_area * 0.08

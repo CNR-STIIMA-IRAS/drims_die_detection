@@ -20,6 +20,9 @@ try:
 except ImportError:
     HAS_YAML = False
 
+# Absolute path to the package root directory (drims_die_detection)
+PACKAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 @dataclass
 class DieDetectorParams:
@@ -124,6 +127,13 @@ class DieDetectorParams:
     # ── Output ─────────────────────────────────────────────────────────────
     output_dir: str = "output"
 
+    @property
+    def resolved_output_dir(self) -> str:
+        """Return output_dir as an absolute path relative to the package root if relative."""
+        if os.path.isabs(self.output_dir):
+            return self.output_dir
+        return os.path.abspath(os.path.join(PACKAGE_ROOT, self.output_dir))
+
     # ── ROS topics & services (used only by die_detector_node) ─────────────
     rgb_topic: str = "/camera/color/image_raw"
     depth_topic: str = "/camera/aligned_depth_to_color/image_raw"
@@ -131,7 +141,7 @@ class DieDetectorParams:
     pose_topic: str = "/dice/pose"
     debug_panels_topic: str = "/dice/debug_panels"
     top_down_topic: str = "/dice/top_down"
-    service_name: str = "die_identification"
+    service_name: str = "die_identification_3d"
 
     # ── Internal (not in YAML) ─────────────────────────────────────────────
     camera_frame_id: str = "camera_color_optical_frame"
@@ -154,6 +164,8 @@ class DieDetectorParams:
         # (e.g. {die_detector_node: {ros__parameters: {...}}})
         if "die_detector_node" in raw and "ros__parameters" in raw["die_detector_node"]:
             raw = raw["die_detector_node"]["ros__parameters"]
+        elif "/**" in raw and "ros__parameters" in raw["/**"]:
+            raw = raw["/**"]["ros__parameters"]
 
         return cls.from_dict(raw)
 

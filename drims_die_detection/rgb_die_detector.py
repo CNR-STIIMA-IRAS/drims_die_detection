@@ -21,6 +21,14 @@ import numpy as np
 from .die_detector_params import DieDetectorParams
 
 
+def safe_find_contours(img, mode, method):
+    """Find contours compatibly across OpenCV 3.x, 4.x, and 5.x."""
+    res = cv2.findContours(img, mode, method)
+    if len(res) == 2:
+        return res[0], res[1]
+    return res[1], res[2]
+
+
 class RGBDieDetector:
     """Detects a die and its pips from a single RGB image.
 
@@ -151,7 +159,7 @@ class RGBDieDetector:
         whitest_clean = cv2.morphologyEx(whitest_mask, cv2.MORPH_CLOSE, kernel)
         whitest_clean = cv2.morphologyEx(whitest_clean, cv2.MORPH_OPEN, kernel)
 
-        contours, _ = cv2.findContours(whitest_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = safe_find_contours(whitest_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         step2_img = rgb_bgr.copy()
         step2_contours_img = rgb_bgr.copy()
@@ -211,7 +219,7 @@ class RGBDieDetector:
                                        np.array([180, 50, 255], dtype=np.uint8))
                     dark = cv2.bitwise_and(dark, cv2.bitwise_not(cv2.dilate(glare, np.ones((5,5), np.uint8))))
 
-                    p_cnts, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    p_cnts, _ = safe_find_contours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     inner_pips_radii = []
                     margin_x = int(bw * 0.08)
                     margin_y = int(bh * 0.08)
@@ -345,7 +353,7 @@ class RGBDieDetector:
         dark_mask = cv2.bitwise_and(dark_mask, cv2.bitwise_not(glare_mask_dilated))
 
         # Pip candidates filtered by circularity and area
-        pip_cnts, _ = cv2.findContours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        pip_cnts, _ = safe_find_contours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         max_pip_area = crop_w * crop_h * 0.025
         max_pip_radius = min(crop_w, crop_h) * 0.09
         valid_pips = []
@@ -371,14 +379,14 @@ class RGBDieDetector:
 
         # Fill pip holes to preserve solid face regions
         bw_filled = bw_mask.copy()
-        cnts_cc, hier = cv2.findContours(bw_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        cnts_cc, hier = safe_find_contours(bw_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
         if hier is not None:
             for i in range(len(cnts_cc)):
                 if hier[0][i][3] >= 0:
                     if cv2.contourArea(cnts_cc[i]) < (crop_w * crop_h * 0.08):
                         cv2.drawContours(bw_filled, [cnts_cc[i]], -1, 255, -1)
 
-        face_cnts, _ = cv2.findContours(bw_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        face_cnts, _ = safe_find_contours(bw_filled, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         all_candidates = sorted(
             [fc for fc in face_cnts if cv2.contourArea(fc) > crop_w * crop_h * 0.03],
             key=cv2.contourArea,

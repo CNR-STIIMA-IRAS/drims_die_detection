@@ -53,7 +53,9 @@ class PointCloudProcessor:
         pixel_coords : (N, 2) int32
         (cx, cy) : principal point actually used
         """
-        h, w = depth_map.shape
+        if depth_map.ndim == 3:
+            depth_map = depth_map[:, :, 0]
+        h, w = depth_map.shape[:2]
         cx = self.params.cx if self.params.cx is not None else w / 2.0
         cy = self.params.cy if self.params.cy is not None else h / 2.0
         fx, fy = self.params.fx, self.params.fy

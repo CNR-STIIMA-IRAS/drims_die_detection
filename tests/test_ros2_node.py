@@ -65,7 +65,6 @@ class TestDieDetectorNodeInstantiation(unittest.TestCase):
     def test_node_has_expected_publishers(self):
         from scripts.die_detector_node import DieDetectorNode
         node = DieDetectorNode()
-        pub_topics = [info.topic for info in node.get_publishers_info_by_topic("/dice/pose")]
         # Publisher should exist
         self.assertIn("/dice/pose", [p.topic_name for p in node.publishers])
         node.destroy_node()

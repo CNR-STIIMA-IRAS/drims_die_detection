@@ -57,6 +57,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("image_name",
                               default_value="",
                               description="Select test image by filename for mock publisher"),
+        # Standard RealSense camera defaults (commented): /camera/color/image_raw, /camera/aligned_depth_to_color/image_raw, /camera/color/camera_info
         DeclareLaunchArgument("rgb_topic",
                               default_value="/camera/color/image_raw",
                               description="RGB image topic"),
@@ -75,13 +76,11 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         condition=IfCondition(LaunchConfiguration("launch_mock_publisher")),
         parameters=[
+            LaunchConfiguration("config"),
             {
-                "rgb_topic":          LaunchConfiguration("rgb_topic"),
-                "depth_topic":        LaunchConfiguration("depth_topic"),
-                "camera_info_topic":  LaunchConfiguration("camera_info_topic"),
-                "image_index":        LaunchConfiguration("image_index"),
-                "image_name":         LaunchConfiguration("image_name"),
-            }
+                "image_index": LaunchConfiguration("image_index"),
+                "image_name": LaunchConfiguration("image_name"),
+            },
         ],
     )
 
@@ -102,14 +101,6 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[
             LaunchConfiguration("config"),
-            {
-                "debug":                LaunchConfiguration("debug"),
-                "visualize":            LaunchConfiguration("visualize"),
-                "save":                 LaunchConfiguration("save"),
-                "rgb_topic":            LaunchConfiguration("rgb_topic"),
-                "depth_topic":          LaunchConfiguration("depth_topic"),
-                "camera_info_topic":    LaunchConfiguration("camera_info_topic"),
-            },
         ],
     )
 

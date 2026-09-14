@@ -2,13 +2,15 @@ die_detector_node:
   ros__parameters:
     canny_high_thresh: 130
     canny_low_thresh: 40
-    camera_info_topic: /camera/color/camera_info
+    # camera_info_topic: /camera/color/camera_info
+    camera_info_topic: /head_front_camera/color/camera_info
     clahe_clip_limit: 6.0
     debug: false
     debug_panels_topic: /dice/debug_panels
     depth_model: Intel/dpt-hybrid-midas
     depth_scale: 0.001
-    depth_topic: /camera/aligned_depth_to_color/image_raw
+    # depth_topic: /camera/aligned_depth_to_color/image_raw
+    depth_topic: /head_front_camera/aligned_depth_to_color/image_raw
     detection_mode: hsv
     die_color: white
     die_size_m: 0.05
@@ -33,9 +35,25 @@ die_detector_node:
     pose_topic: /dice/pose
     ransac_distance_threshold: 0.015
     ransac_max_iterations: 1000
-    rgb_topic: /camera/color/image_raw
+    # rgb_topic: /camera/color/image_raw
+    rgb_topic: /head_front_camera/color/image_raw
     save: true
-    service_name: die_identification
+    service_name: die_identification_3d
     top_down_topic: /dice/top_down
     use_monocular_fallback: true
     visualize: false
+
+rgbd_mock_publisher:
+  ros__parameters:
+    # frame_id: camera_color_optical_frame
+    frame_id: head_front_camera_color_optical_frame
+    # rgb_topic: /camera/color/image_raw
+    rgb_topic: /head_front_camera/color/image_raw
+    # depth_topic: /camera/aligned_depth_to_color/image_raw
+    depth_topic: /head_front_camera/aligned_depth_to_color/image_raw
+    # camera_info_topic: /camera/color/camera_info
+    camera_info_topic: /head_front_camera/color/camera_info
+    # points_topic: /camera/depth/color/points
+    points_topic: /head_front_camera/depth/color/points
+    publish_rate: 2.0
+

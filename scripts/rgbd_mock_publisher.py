@@ -40,6 +40,36 @@ except ImportError:
     HAS_ROS2 = False
 
 
+def _load_yaml_defaults(node_name: str) -> dict:
+    """Load default parameter values from die_detector_params.yaml if available."""
+    try:
+        import yaml
+        yaml_path = None
+        try:
+            share_dir = get_package_share_directory("drims_die_detection")
+            cand = os.path.join(share_dir, "config", "die_detector_params.yaml")
+            if os.path.isfile(cand):
+                yaml_path = cand
+        except Exception:
+            pass
+
+        if yaml_path is None:
+            src_cand = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config", "die_detector_params.yaml"))
+            if os.path.isfile(src_cand):
+                yaml_path = src_cand
+
+        if yaml_path and os.path.isfile(yaml_path):
+            with open(yaml_path, "r") as f:
+                raw = yaml.safe_load(f) or {}
+            if node_name in raw and "ros__parameters" in raw[node_name]:
+                return raw[node_name]["ros__parameters"]
+            elif "/**" in raw and "ros__parameters" in raw["/**"]:
+                return raw["/**"]["ros__parameters"]
+    except Exception:
+        pass
+    return {}
+
+
 class RGBDMockPublisher(Node):
     """ROS 2 node that publishes user-selected RGB-D images directly from test_images folder."""
 
@@ -47,13 +77,17 @@ class RGBDMockPublisher(Node):
         super().__init__("rgbd_mock_publisher")
         self.get_logger().info("Initialising RGB-D Mock Publisher…")
 
-        # ── Parameters ──────────────────────────────────────────────────
-        self.declare_parameter("publish_rate", 2.0)  # Hz
-        self.declare_parameter("frame_id", "camera_color_optical_frame")
-        self.declare_parameter("rgb_topic", "/camera/color/image_raw")
-        self.declare_parameter("depth_topic", "/camera/aligned_depth_to_color/image_raw")
-        self.declare_parameter("camera_info_topic", "/camera/color/camera_info")
-        self.declare_parameter("points_topic", "/camera/depth/color/points")
+        yaml_defaults = _load_yaml_defaults("rgbd_mock_publisher")
+
+        def _get_default(param_name: str, fallback):
+            return yaml_defaults.get(param_name, fallback)
+
+        self.declare_parameter("publish_rate", float(_get_default("publish_rate", 2.0)))
+        self.declare_parameter("frame_id", str(_get_default("frame_id", "camera_color_optical_frame")))
+        self.declare_parameter("rgb_topic", str(_get_default("rgb_topic", "/camera/color/image_raw")))
+        self.declare_parameter("depth_topic", str(_get_default("depth_topic", "/camera/aligned_depth_to_color/image_raw")))
+        self.declare_parameter("camera_info_topic", str(_get_default("camera_info_topic", "/camera/color/camera_info")))
+        self.declare_parameter("points_topic", str(_get_default("points_topic", "/camera/depth/color/points")))
         self.declare_parameter("test_images_dir", "")
 
         # Image selection parameters

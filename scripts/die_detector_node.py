@@ -51,6 +51,37 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from drims_die_detection import DieDetectorParams, DieDetectorPipeline
 
 
+def _load_yaml_defaults(node_name: str) -> dict:
+    """Load default parameter values from die_detector_params.yaml if available."""
+    try:
+        import yaml
+        yaml_path = None
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            share_dir = get_package_share_directory("drims_die_detection")
+            cand = os.path.join(share_dir, "config", "die_detector_params.yaml")
+            if os.path.isfile(cand):
+                yaml_path = cand
+        except Exception:
+            pass
+
+        if yaml_path is None:
+            src_cand = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config", "die_detector_params.yaml"))
+            if os.path.isfile(src_cand):
+                yaml_path = src_cand
+
+        if yaml_path and os.path.isfile(yaml_path):
+            with open(yaml_path, "r") as f:
+                raw = yaml.safe_load(f) or {}
+            if node_name in raw and "ros__parameters" in raw[node_name]:
+                return raw[node_name]["ros__parameters"]
+            elif "/**" in raw and "ros__parameters" in raw["/**"]:
+                return raw["/**"]["ros__parameters"]
+    except Exception:
+        pass
+    return {}
+
+
 def _declare_and_get(node: "Node", name: str, default):
     """Declare a ROS 2 parameter and return its value."""
     node.declare_parameter(name, default)
@@ -64,43 +95,48 @@ class DieDetectorNode(Node):
         super().__init__("die_detector_node")
         self.get_logger().info("Initialising DieDetectorNode…")
 
+        yaml_defaults = _load_yaml_defaults("die_detector_node")
+
+        def _g(name: str, fallback):
+            return yaml_defaults.get(name, fallback)
+
         # ── Read ROS 2 parameters ──────────────────────────────────────
         p = DieDetectorParams(
-            debug=_declare_and_get(self, "debug", False),
-            visualize=_declare_and_get(self, "visualize", False),
-            save=_declare_and_get(self, "save", False),
-            fx=_declare_and_get(self, "fx", 615.0),
-            fy=_declare_and_get(self, "fy", 615.0),
-            depth_model=_declare_and_get(self, "depth_model", "Intel/dpt-hybrid-midas"),
-            depth_scale=_declare_and_get(self, "depth_scale", 0.001),
-            use_monocular_fallback=_declare_and_get(self, "use_monocular_fallback", True),
-            ransac_distance_threshold=_declare_and_get(self, "ransac_distance_threshold", 0.015),
-            ransac_max_iterations=_declare_and_get(self, "ransac_max_iterations", 1000),
-            die_color=_declare_and_get(self, "die_color", "white"),
-            num_color_clusters=_declare_and_get(self, "num_color_clusters", 5),
-            die_size_m=_declare_and_get(self, "die_size_m", 0.050),
-            detection_mode=_declare_and_get(self, "detection_mode", "hsv"),
-            hsv_min=_declare_and_get(self, "hsv_min", [0, 0, 150]),
-            hsv_max=_declare_and_get(self, "hsv_max", [180, 80, 255]),
-            glare_v_thresh=_declare_and_get(self, "glare_v_thresh", 245),
-            clahe_clip_limit=_declare_and_get(self, "clahe_clip_limit", 3.0),
-            pip_min_circularity=_declare_and_get(self, "pip_min_circularity", 0.45),
-            canny_low_thresh=_declare_and_get(self, "canny_low_thresh", 40),
-            canny_high_thresh=_declare_and_get(self, "canny_high_thresh", 130),
-            min_pips=_declare_and_get(self, "min_pips", 1),
-            max_pips=_declare_and_get(self, "max_pips", 6),
-            min_die_height_m=_declare_and_get(self, "min_die_height_m", 0.003),
-            max_die_height_m=_declare_and_get(self, "max_die_height_m", 0.065),
-            output_dir=_declare_and_get(self, "output_dir", "output"),
-            rgb_topic=_declare_and_get(self, "rgb_topic", "/camera/color/image_raw"),
+            debug=_declare_and_get(self, "debug", _g("debug", False)),
+            visualize=_declare_and_get(self, "visualize", _g("visualize", False)),
+            save=_declare_and_get(self, "save", _g("save", False)),
+            fx=_declare_and_get(self, "fx", _g("fx", 615.0)),
+            fy=_declare_and_get(self, "fy", _g("fy", 615.0)),
+            depth_model=_declare_and_get(self, "depth_model", _g("depth_model", "Intel/dpt-hybrid-midas")),
+            depth_scale=_declare_and_get(self, "depth_scale", _g("depth_scale", 0.001)),
+            use_monocular_fallback=_declare_and_get(self, "use_monocular_fallback", _g("use_monocular_fallback", True)),
+            ransac_distance_threshold=_declare_and_get(self, "ransac_distance_threshold", _g("ransac_distance_threshold", 0.015)),
+            ransac_max_iterations=_declare_and_get(self, "ransac_max_iterations", _g("ransac_max_iterations", 1000)),
+            die_color=_declare_and_get(self, "die_color", _g("die_color", "white")),
+            num_color_clusters=_declare_and_get(self, "num_color_clusters", _g("num_color_clusters", 5)),
+            die_size_m=_declare_and_get(self, "die_size_m", _g("die_size_m", 0.050)),
+            detection_mode=_declare_and_get(self, "detection_mode", _g("detection_mode", "hsv")),
+            hsv_min=_declare_and_get(self, "hsv_min", _g("hsv_min", [0, 0, 150])),
+            hsv_max=_declare_and_get(self, "hsv_max", _g("hsv_max", [180, 80, 255])),
+            glare_v_thresh=_declare_and_get(self, "glare_v_thresh", _g("glare_v_thresh", 245)),
+            clahe_clip_limit=_declare_and_get(self, "clahe_clip_limit", _g("clahe_clip_limit", 3.0)),
+            pip_min_circularity=_declare_and_get(self, "pip_min_circularity", _g("pip_min_circularity", 0.45)),
+            canny_low_thresh=_declare_and_get(self, "canny_low_thresh", _g("canny_low_thresh", 40)),
+            canny_high_thresh=_declare_and_get(self, "canny_high_thresh", _g("canny_high_thresh", 130)),
+            min_pips=_declare_and_get(self, "min_pips", _g("min_pips", 1)),
+            max_pips=_declare_and_get(self, "max_pips", _g("max_pips", 6)),
+            min_die_height_m=_declare_and_get(self, "min_die_height_m", _g("min_die_height_m", 0.003)),
+            max_die_height_m=_declare_and_get(self, "max_die_height_m", _g("max_die_height_m", 0.065)),
+            output_dir=_declare_and_get(self, "output_dir", _g("output_dir", "output")),
+            rgb_topic=_declare_and_get(self, "rgb_topic", _g("rgb_topic", "/camera/color/image_raw")),
             depth_topic=_declare_and_get(self, "depth_topic",
-                                         "/camera/aligned_depth_to_color/image_raw"),
+                                         _g("depth_topic", "/camera/aligned_depth_to_color/image_raw")),
             camera_info_topic=_declare_and_get(self, "camera_info_topic",
-                                               "/camera/color/camera_info"),
-            pose_topic=_declare_and_get(self, "pose_topic", "/dice/pose"),
-            debug_panels_topic=_declare_and_get(self, "debug_panels_topic", "/dice/debug_panels"),
-            top_down_topic=_declare_and_get(self, "top_down_topic", "/dice/top_down"),
-            service_name=_declare_and_get(self, "service_name", "die_identification"),
+                                               _g("camera_info_topic", "/camera/color/camera_info")),
+            pose_topic=_declare_and_get(self, "pose_topic", _g("pose_topic", "/dice/pose")),
+            debug_panels_topic=_declare_and_get(self, "debug_panels_topic", _g("debug_panels_topic", "/dice/debug_panels")),
+            top_down_topic=_declare_and_get(self, "top_down_topic", _g("top_down_topic", "/dice/top_down")),
+            service_name=_declare_and_get(self, "service_name", _g("service_name", "die_identification")),
         )
         self._params = p
         p.log(self.get_logger())
@@ -197,7 +233,8 @@ class DieDetectorNode(Node):
             result = self._pipeline.process_rgbd(rgb, depth_m)
             self._last_result = result
         except Exception as exc:
-            self.get_logger().error(f"Pipeline error: {exc}")
+            import traceback
+            self.get_logger().error(f"Pipeline error: {exc}\n{traceback.format_exc()}")
             return
 
         stamp = rgb_msg.header.stamp
