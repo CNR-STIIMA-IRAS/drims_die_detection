@@ -11,12 +11,12 @@ die_detector_node:
     depth_scale: 0.001
     # depth_topic: /camera/aligned_depth_to_color/image_raw
     depth_topic: /head_front_camera/aligned_depth_to_color/image_raw
-    detection_mode: hsv
+    detection_mode: km
     die_color: white
     die_size_m: 0.05
     fx: 615.0
     fy: 615.0
-    glare_v_thresh: 198
+    glare_v_thresh: 150 
     hsv_max:
     - 105
     - 55
@@ -25,13 +25,13 @@ die_detector_node:
     - 80
     - 0
     - 94
-    max_die_height_m: 0.065
+    max_die_height_m: 0.1 #0.065
     max_pips: 6
     min_die_height_m: 0.003
     min_pips: 1
     num_color_clusters: 5
     output_dir: output
-    pip_min_circularity: 0.2
+    pip_min_circularity: 0.65
     pose_topic: /dice/pose
     ransac_distance_threshold: 0.015
     ransac_max_iterations: 1000
