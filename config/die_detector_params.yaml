@@ -5,7 +5,7 @@ die_detector_node:
     # camera_info_topic: /camera/color/camera_info
     camera_info_topic: /head_front_camera/color/camera_info
     clahe_clip_limit: 6.0
-    debug: false
+    debug: true
     debug_panels_topic: /dice/debug_panels
     depth_model: Intel/dpt-hybrid-midas
     depth_scale: 0.001
@@ -41,7 +41,7 @@ die_detector_node:
     service_name: die_identification_3d
     top_down_topic: /dice/top_down
     use_monocular_fallback: true
-    visualize: false
+    visualize: true
 
 rgbd_mock_publisher:
   ros__parameters:

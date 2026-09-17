@@ -25,6 +25,7 @@ import numpy as np
 try:
     import rclpy
     from rclpy.node import Node
+    from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy, QoSHistoryPolicy
     from sensor_msgs.msg import Image, CameraInfo
     from geometry_msgs.msg import PoseStamped, TransformStamped
     from visualization_msgs.msg import Marker
@@ -170,14 +171,20 @@ class DieDetectorNode(Node):
             self.get_logger().error(f"Die identification service '{p.service_name}' not available.")
             self._service = None
 
+        # QoS
+        qos_camera = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST,
+                                depth=10, 
+                                reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                                durability=QoSDurabilityPolicy.VOLATILE)
+
         # CameraInfo subscriber (latched once)
         self._info_sub = self.create_subscription(
-            CameraInfo, p.camera_info_topic, self._camera_info_cb, 10
+            CameraInfo, p.camera_info_topic, self._camera_info_cb, qos_camera
         )
 
         # Synchronised RGB + Depth
-        self._rgb_sub = message_filters.Subscriber(self, Image, p.rgb_topic)
-        self._depth_sub = message_filters.Subscriber(self, Image, p.depth_topic)
+        self._rgb_sub = message_filters.Subscriber(self, Image, p.rgb_topic, qos_profile=qos_camera)
+        self._depth_sub = message_filters.Subscriber(self, Image, p.depth_topic, qos_profile=qos_camera)
         self._sync = message_filters.ApproximateTimeSynchronizer(
             [self._rgb_sub, self._depth_sub], queue_size=10, slop=0.05
         )
