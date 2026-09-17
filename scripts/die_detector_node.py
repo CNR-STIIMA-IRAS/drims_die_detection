@@ -32,13 +32,9 @@ try:
     from tf2_ros import TransformBroadcaster
     from cv_bridge import CvBridge
     import message_filters
+    from drims_homework.srv import DieIdentification3D
     HAS_ROS2 = True
-    try:
-        from easy_motion_msgs.srv import DieIdentification3D
-        HAS_EASY_MOTION_MSGS = True
-    except ImportError:
-        HAS_EASY_MOTION_MSGS = False
-        DieIdentification3D = None
+    HAS_EASY_MOTION_MSGS = True
 except ImportError:
     HAS_ROS2 = False
     HAS_EASY_MOTION_MSGS = False
