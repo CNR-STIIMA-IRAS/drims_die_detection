@@ -13,7 +13,7 @@ die_detector_node:
     depth_topic: /head_front_camera/aligned_depth_to_color/image_raw
     detection_mode: km
     die_color: white
-    die_size_m: 0.05
+    die_size_m: 0.041
     fx: 615.0
     fy: 615.0
     glare_v_thresh: 150 

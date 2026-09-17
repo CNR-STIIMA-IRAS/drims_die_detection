@@ -43,11 +43,56 @@ try:
 except ImportError:
     HAS_TKINTER = False
 
+# Check ROS 2 Live camera subscription availability
+try:
+    import rclpy
+    from rclpy.node import Node
+    from rclpy.qos import qos_profile_sensor_data
+    from sensor_msgs.msg import Image as SensorImage
+    from cv_bridge import CvBridge
+    HAS_ROS2_LIVE = True
+except ImportError:
+    HAS_ROS2_LIVE = False
+
 # Allow importing package from repo root
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.insert(0, _REPO_ROOT)
 
 from drims_die_detection import DieDetectorParams, RGBDieDetector
+
+
+class LiveRosImageSubscriber:
+    """ROS 2 Node helper for live camera topic tuning."""
+
+    def __init__(self, topic: str) -> None:
+        if not rclpy.ok():
+            rclpy.init()
+        self.node = rclpy.create_node("die_detector_tuner_live_sub")
+        self.bridge = CvBridge()
+        self.topic = topic
+        self.latest_frame: np.ndarray | None = None
+        self.frame_count = 0
+        self.sub = self.node.create_subscription(
+            SensorImage, self.topic, self._cb, qos_profile_sensor_data
+        )
+        print(f"[Live ROS] 📡 Subscribed to topic: '{self.topic}' (using sensor_data QoS)")
+
+
+    def _cb(self, msg: SensorImage) -> None:
+        try:
+            self.latest_frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            self.frame_count += 1
+        except Exception as e:
+            print(f"[Live ROS] Error converting image: {e}")
+
+    def spin_once(self, timeout_sec: float = 0.005) -> None:
+        if rclpy.ok():
+            rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+
+    def shutdown(self) -> None:
+        if rclpy.ok():
+            self.node.destroy_node()
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -60,8 +105,9 @@ class OpenCVTunerGUI:
     WIN_CONTROLS = "Die Detector — Trackbar Controls"
     WIN_PREVIEW = "Die Detector — Live Detection Preview"
 
-    def __init__(self, config_path: str, initial_image_path: str | None = None) -> None:
+    def __init__(self, config_path: str, initial_image_path: str | None = None, live_topic: str | None = None) -> None:
         self.config_path = config_path
+        self.live_topic = live_topic
         if os.path.isfile(self.config_path):
             self.params = DieDetectorParams.from_yaml(self.config_path)
             print(f"[GUI] Loaded config from {self.config_path}")
@@ -71,6 +117,13 @@ class OpenCVTunerGUI:
         self.detector = RGBDieDetector(self.params)
         self.image_paths = self._find_test_images(initial_image_path)
         self.current_idx = 0
+        self.live_sub: LiveRosImageSubscriber | None = None
+
+        if self.live_topic:
+            if HAS_ROS2_LIVE:
+                self.live_sub = LiveRosImageSubscriber(self.live_topic)
+            else:
+                print(f"[ERROR] Cannot use live mode: ROS 2 / cv_bridge packages not found in Python path.")
 
     def _find_test_images(self, preferred_path: str | None) -> list[str]:
         paths = []
@@ -86,7 +139,7 @@ class OpenCVTunerGUI:
         return paths
 
     def run(self) -> None:
-        if not self.image_paths:
+        if not self.live_sub and not self.image_paths:
             print("[ERROR] No sample images found in test_images/rgb/.")
             return
 
@@ -94,6 +147,8 @@ class OpenCVTunerGUI:
         cv2.resizeWindow(self.WIN_CONTROLS, 550, 650)
         cv2.namedWindow(self.WIN_PREVIEW, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.WIN_PREVIEW, 1200, 650)
+        cv2.waitKey(1)
+
 
         def _nop(x): pass
 
@@ -118,7 +173,8 @@ class OpenCVTunerGUI:
         print("Controls & Hotkeys:")
         print("  [S]  Save current sliders to config/die_detector_params.yaml")
         print("  [R]  Sync current parameters live to ROS 2 node (/die_detector_node)")
-        print("  [N]  Load next test image")
+        if not self.live_sub:
+            print("  [N]  Load next test image")
         print("  [Q / ESC]  Quit tuner")
         print("=" * 70 + "\n")
 
@@ -142,11 +198,26 @@ class OpenCVTunerGUI:
             self.params.canny_low_thresh = cv2.getTrackbarPos("Canny Low Thresh", self.WIN_CONTROLS)
             self.params.canny_high_thresh = cv2.getTrackbarPos("Canny High Thresh", self.WIN_CONTROLS)
 
-            # Process image
-            img_path = self.image_paths[self.current_idx % len(self.image_paths)]
-            bgr = cv2.imread(img_path)
-            if bgr is None:
-                continue
+            # Acquire frame
+            if self.live_sub is not None:
+                self.live_sub.spin_once(0.01)
+                bgr = self.live_sub.latest_frame
+                if bgr is None:
+                    blank = np.zeros((480, 720, 3), dtype=np.uint8)
+                    cv2.putText(blank, f"Waiting for live ROS 2 topic: '{self.live_topic}'...", (20, 240),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    cv2.imshow(self.WIN_PREVIEW, blank)
+                    key = cv2.waitKey(40) & 0xFF
+                    if key in (27, ord('q'), ord('Q')):
+                        break
+                    continue
+                img_name = f"LIVE ROS 2: {self.live_topic} (Frame #{self.live_sub.frame_count})"
+            else:
+                img_path = self.image_paths[self.current_idx % len(self.image_paths)]
+                bgr = cv2.imread(img_path)
+                if bgr is None:
+                    continue
+                img_name = os.path.basename(img_path)
 
             res = self.detector.detect(bgr)
             debug_steps = res.get("debug_steps", {})
@@ -165,8 +236,8 @@ class OpenCVTunerGUI:
 
             # Draw HUD explanation banner
             mode_str = self.params.detection_mode.upper()
-            hud_txt = f"[{os.path.basename(img_path)}] Mode: {mode_str} | Faces: {res['num_visible_faces']} | Pips: {res['total_pips']}"
-            cv2.putText(ann_resized, hud_txt, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+            hud_txt = f"[{img_name}] Mode: {mode_str} | Faces: {res['num_visible_faces']} | Pips: {res['total_pips']}"
+            cv2.putText(ann_resized, hud_txt, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
             cv2.putText(mask_resized, f"Color Mask ({mode_str})", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
 
             # Bottom help HUD on preview
@@ -186,11 +257,14 @@ class OpenCVTunerGUI:
                 self._save_yaml()
             elif key in (ord('r'), ord('R')):
                 self._sync_ros2()
-            elif key in (ord('n'), ord('N')):
+            elif key in (ord('n'), ord('N')) and not self.live_sub:
                 self.current_idx += 1
                 print(f"[GUI] Switched to image: {self.image_paths[self.current_idx % len(self.image_paths)]}")
 
+        if self.live_sub:
+            self.live_sub.shutdown()
         cv2.destroyAllWindows()
+
 
     def _save_yaml(self) -> None:
         try:
@@ -260,13 +334,14 @@ if HAS_TKINTER:
     class DieDetectorTunerGUI:
         """Tkinter-based Parameter Tuning GUI with explanations and live ROS 2 sync."""
 
-        def __init__(self, root: tk.Tk, initial_config_path: str, initial_image_path: str | None = None) -> None:
+        def __init__(self, root: tk.Tk, initial_config_path: str, initial_image_path: str | None = None, live_topic: str | None = None) -> None:
             self.root = root
             self.root.title("Die Detector 3D — Parameter Tuning & Calibration GUI")
             self.root.geometry("1400x900")
             self.root.minsize(1100, 750)
 
             self.config_path = initial_config_path
+            self.live_topic = live_topic
 
             if os.path.isfile(self.config_path):
                 self.params = DieDetectorParams.from_yaml(self.config_path)
@@ -279,13 +354,32 @@ if HAS_TKINTER:
             self.image_paths = self._find_test_images(initial_image_path)
             self.current_img_idx = 0
             self.current_bgr: np.ndarray | None = None
+            self.live_sub: LiveRosImageSubscriber | None = None
+
+            if self.live_topic:
+                if HAS_ROS2_LIVE:
+                    self.live_sub = LiveRosImageSubscriber(self.live_topic)
+                else:
+                    print(f"[ERROR] Cannot use live mode: ROS 2 / cv_bridge packages not found in Python path.")
 
             self._create_styles()
             self._build_ui()
 
-            if self.image_paths:
+            if self.live_sub:
+                self._poll_live_ros()
+            elif self.image_paths:
                 self._load_image(self.image_paths[0])
                 self._update_pipeline()
+
+        def _poll_live_ros(self) -> None:
+            if self.live_sub:
+                self.live_sub.spin_once(0.0)
+                frame = self.live_sub.latest_frame
+                if frame is not None:
+                    self.current_bgr = frame
+                    self._update_pipeline()
+                self.root.after(30, self._poll_live_ros)
+
 
         def _find_test_images(self, preferred_path: str | None) -> list[str]:
             paths = []
@@ -592,21 +686,43 @@ def main():
     parser = argparse.ArgumentParser(description="Interactive Die Detector Parameter Tuning GUI")
     parser.add_argument("--image", default=None, help="Path to initial sample RGB image")
     parser.add_argument("--config", default="config/die_detector_params.yaml", help="Path to YAML config file")
+    parser.add_argument("--live", action="store_true", help="Subscribe to live ROS 2 camera image topic")
+    parser.add_argument("--topic", default=None, help="ROS 2 camera image topic (e.g. /head_front_camera/color/image_raw)")
     parser.add_argument("--cv", action="store_true", help="Force OpenCV Trackbar GUI mode (skips Tkinter)")
     args = parser.parse_args()
 
     config_path = args.config if os.path.isfile(args.config) else os.path.join(_REPO_ROOT, "config", "die_detector_params.yaml")
 
+    live_topic = None
+    if args.live or args.topic is not None:
+        if args.topic:
+            live_topic = args.topic
+        else:
+            live_topic = "/head_front_camera/color/image_raw"
+            if os.path.isfile(config_path):
+                try:
+                    with open(config_path, "r") as f:
+                        cfg_data = yaml.safe_load(f) or {}
+                    params_sec = cfg_data.get("die_detector_node", {}).get("ros__parameters", {})
+                    live_topic = params_sec.get("rgb_topic", live_topic)
+                except Exception:
+                    pass
+
     if HAS_TKINTER and not args.cv:
-        print("[GUI] Launching Tkinter GUI with slider explanations...")
+        mode_desc = f"LIVE ROS Topic '{live_topic}'" if live_topic else "Offline Saved Images"
+        print(f"[GUI] Launching Tkinter GUI... Mode: {mode_desc}")
         root = tk.Tk()
-        app = DieDetectorTunerGUI(root, config_path, args.image)
+        app = DieDetectorTunerGUI(root, config_path, args.image, live_topic=live_topic)
         root.mainloop()
+        if app.live_sub:
+            app.live_sub.shutdown()
     else:
-        print("[GUI] Launching OpenCV Trackbar GUI fallback with HUD explanations...")
-        app = OpenCVTunerGUI(config_path, args.image)
+        mode_desc = f"LIVE ROS Topic '{live_topic}'" if live_topic else "Offline Saved Images"
+        print(f"[GUI] Launching OpenCV Trackbar GUI... Mode: {mode_desc}")
+        app = OpenCVTunerGUI(config_path, args.image, live_topic=live_topic)
         app.run()
 
 
 if __name__ == "__main__":
     main()
+

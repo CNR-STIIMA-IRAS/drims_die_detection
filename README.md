@@ -146,11 +146,19 @@ python scripts/run_die_detector.py --visualize
 To visually tune detection parameters (HSV/LAB color bounds, specular glare threshold, CLAHE clip limit, and pip circularity) under real lighting conditions:
 
 ```bash
-# Launch interactive trackbar GUI:
-python scripts/tune_die_detector_gui.py --image test_images/rgb/5834717044920750589.jpg
+# Launch GUI on offline saved images:
+python scripts/tune_die_detector_gui.py
+
+# Launch GUI on LIVE ROS 2 camera stream:
+python scripts/tune_die_detector_gui.py --live
+
+# Launch GUI on custom ROS 2 topic:
+python scripts/tune_die_detector_gui.py --live --topic /head_front_camera/color/image_raw
 ```
-- **Live Preview:** View real-time color segmentation and pip detection output.
-- **Save Config:** Press `'s'` or `'S'` in the GUI window to automatically save the tuned parameters directly to `config/die_detector_params.yaml`.
+- **Live Preview:** View real-time color segmentation and pip detection output (on static saved images or live ROS camera stream).
+- **Save Config:** Press `'s'` or `'S'` (or click **Save to YAML**) to save parameters directly to `config/die_detector_params.yaml`.
+- **Sync to ROS Node:** Click **Sync Live to ROS 2 Node** to instantly push slider values to a running `/die_detector_node` via `ros2 param set`.
+
 
 Output files (written to `output/` by default):
 - `detected_<image>.jpg` — 6-panel debug collage
