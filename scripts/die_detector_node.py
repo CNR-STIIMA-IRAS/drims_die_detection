@@ -33,7 +33,7 @@ try:
     from tf2_ros import TransformBroadcaster
     from cv_bridge import CvBridge
     import message_filters
-    from drims_homework.srv import DieIdentification3D
+    from drims_homework_interfaces.srv import DieIdentification3D
     HAS_ROS2 = True
     HAS_EASY_MOTION_MSGS = True
 except ImportError:
