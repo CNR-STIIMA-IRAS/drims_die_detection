@@ -33,6 +33,7 @@ try:
     from tf2_ros import TransformBroadcaster
     from cv_bridge import CvBridge
     import message_filters
+    from drims_homework_interfaces.srv import DieIdentification3D
     HAS_ROS2 = True
     try:
         from drims_die_detection.srv import DieIdentification3D
