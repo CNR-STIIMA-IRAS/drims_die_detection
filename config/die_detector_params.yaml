@@ -1,59 +1,55 @@
 die_detector_node:
   ros__parameters:
-    canny_high_thresh: 130
-    canny_low_thresh: 40
-    # camera_info_topic: /camera/color/camera_info
-    camera_info_topic: /head_front_camera/color/camera_info
-    clahe_clip_limit: 6.0
-    debug: true
-    debug_panels_topic: /dice/debug_panels
+    debug: false
+    save: false
+    visualize: false
+    use_monocular_fallback: false
+    detection_mode: hsv
     depth_model: Intel/dpt-hybrid-midas
     depth_scale: 0.001
-    # depth_topic: /camera/aligned_depth_to_color/image_raw
-    depth_topic: /head_front_camera/aligned_depth_to_color/image_raw
-    detection_mode: hsv
-    die_color: white
-    die_size_m: 0.05
-    fx: 615.0
-    fy: 615.0
-    glare_v_thresh: 198
-    hsv_max:
-    - 105
-    - 55
-    - 255
-    hsv_min:
-    - 80
-    - 0
-    - 94
-    max_die_height_m: 0.065
-    max_pips: 6
-    min_die_height_m: 0.003
-    min_pips: 1
-    num_color_clusters: 5
+    ransac_distance_threshold: 0.01
+    ransac_max_iterations: 200
     output_dir: output
-    pip_min_circularity: 0.2
+    camera_info_topic: /wrist_camera/wrist_camera/color/camera_info
+    rgb_topic: /wrist_camera/wrist_camera/color/image_raw
+    depth_topic: /wrist_camera/wrist_camera/aligned_depth_to_color/image_raw
+    camera_frame_id: wrist_camera_color_optical_frame
+    fx: 918.8717651367188
+    fy: 649.647705078125
+    die_color: white
+    die_size_m: 0.04
+    min_die_height_m: 0.005
+    max_die_height_m: 0.065
+    hsv_min:
+    - 0
+    - 0
+    - 165
+    hsv_max:
+    - 180
+    - 170
+    - 255
+    glare_v_thresh: 220
+    num_color_clusters: 5
+    pip_min_circularity: 0.28
+    clahe_clip_limit: 2.5
+    canny_low_thresh: 35
+    canny_high_thresh: 130
+    min_pips: 1
+    max_pips: 6
+    min_pip_area_ratio: 0.003
+    max_pip_area_ratio: 0.05
+    max_pip_radius_ratio: 0.18
     pose_topic: /dice/pose
-    ransac_distance_threshold: 0.015
-    ransac_max_iterations: 1000
-    # rgb_topic: /camera/color/image_raw
-    rgb_topic: /head_front_camera/color/image_raw
-    save: true
-    service_name: die_identification_3d
+    debug_panels_topic: /dice/debug_panels
     top_down_topic: /dice/top_down
-    use_monocular_fallback: true
-    visualize: true
-
+    service_name: die_identification_3d
+    cx: null
+    cy: null
 rgbd_mock_publisher:
   ros__parameters:
-    # frame_id: camera_color_optical_frame
     frame_id: head_front_camera_color_optical_frame
-    # rgb_topic: /camera/color/image_raw
     rgb_topic: /head_front_camera/color/image_raw
-    # depth_topic: /camera/aligned_depth_to_color/image_raw
     depth_topic: /head_front_camera/aligned_depth_to_color/image_raw
-    # camera_info_topic: /camera/color/camera_info
     camera_info_topic: /head_front_camera/color/camera_info
-    # points_topic: /camera/depth/color/points
     points_topic: /head_front_camera/depth/color/points
     publish_rate: 2.0
-

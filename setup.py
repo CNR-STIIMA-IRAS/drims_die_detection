@@ -41,5 +41,6 @@ setup(
         "scripts/run_die_detector.py",
         "scripts/rgbd_mock_publisher.py",
         "scripts/tune_die_detector_gui.py",
+        "scripts/detection_optimization.py",
     ],
 )

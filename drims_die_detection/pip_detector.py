@@ -110,10 +110,12 @@ class PipDetector:
         enhanced = clahe.apply(gray)
         blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
 
+        # Dynamically scale adaptive threshold block size to face crop dimensions
+        block_size = max(15, (int(min(h, w) * 0.15) | 1))
         thresh = cv2.adaptiveThreshold(
             blurred, 255,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
-            15, 4,
+            block_size, 4,
         )
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
@@ -128,8 +130,10 @@ class PipDetector:
 
         contours, _ = safe_find_contours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         die_area = w * h
-        min_pip_area = die_area * 0.003
-        max_pip_area = die_area * 0.08
+        min_area_ratio = getattr(self.params, "min_pip_area_ratio", 0.003)
+        max_area_ratio = getattr(self.params, "max_pip_area_ratio", 0.08)
+        min_pip_area = die_area * min_area_ratio
+        max_pip_area = die_area * max_area_ratio
 
         valid_cnts = []
         keypoints = []

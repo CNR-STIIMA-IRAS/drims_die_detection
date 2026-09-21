@@ -1,0 +1,13 @@
+# Request
+---
+# Response
+geometry_msgs/PoseStamped die_top_pose
+geometry_msgs/TransformStamped die_top_tf
+string top_face
+string front_face
+int32 top_face_pips
+int32 front_face_pips
+int32 face_number
+geometry_msgs/PoseStamped pose
+bool success
+

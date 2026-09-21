@@ -341,8 +341,6 @@ class RGBDieDetector:
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
             15, 4
         )
-        pip_holes = cv2.bitwise_and(cv2.bitwise_not(bw_mask), hull_mask)
-        dark_mask = cv2.bitwise_or(dark_mask, pip_holes)
         dark_mask = cv2.bitwise_and(dark_mask, hull_mask)
 
         # Glare mask: exclude blown-out specular highlights from pip candidates
@@ -352,14 +350,25 @@ class RGBDieDetector:
         glare_mask_dilated = cv2.dilate(glare_mask, np.ones((5, 5), np.uint8))
         dark_mask = cv2.bitwise_and(dark_mask, cv2.bitwise_not(glare_mask_dilated))
 
+        # Morphological opening with 5x5 ellipse to disconnect pips touching the outer drawn border
+        # and eliminate small stray noise specks
+        morph_ksize = 5
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_ksize, morph_ksize))
+        dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_OPEN, kernel_open)
+
         # Pip candidates filtered by circularity and area
         pip_cnts, _ = safe_find_contours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        max_pip_area = crop_w * crop_h * 0.025
-        max_pip_radius = min(crop_w, crop_h) * 0.09
+        max_area_ratio = getattr(self.params, "max_pip_area_ratio", 0.08)
+        max_radius_ratio = getattr(self.params, "max_pip_radius_ratio", 0.22)
+        min_area_ratio = getattr(self.params, "min_pip_area_ratio", 0.001)
+
+        min_pip_area = max(5.0, crop_w * crop_h * min_area_ratio)
+        max_pip_area = crop_w * crop_h * max_area_ratio
+        max_pip_radius = min(crop_w, crop_h) * max_radius_ratio
         valid_pips = []
         for pc in pip_cnts:
             pa = cv2.contourArea(pc)
-            if 6 < pa < max_pip_area:
+            if min_pip_area <= pa <= max_pip_area:
                 perim = cv2.arcLength(pc, True)
                 if perim == 0:
                     continue
@@ -371,8 +380,9 @@ class RGBDieDetector:
                         asp = float(bw_p) / float(bh_p) if bh_p > 0 else 0
                         if 0.3 <= asp <= 3.2:
                             valid_pips.append({
-                                "center": (int(px), int(py)),
-                                "radius": max(2, int(pr)),
+                                "center": (int(round(px)), int(round(py))),
+                                "center_float": (float(px), float(py)),
+                                "radius": max(2, int(round(pr))),
                                 "contour": pc,
                                 "area": pa,
                             })
@@ -414,9 +424,9 @@ class RGBDieDetector:
             # Check pip counts strictly within the contour/polygon of this face
             face_pips = []
             for p in valid_pips:
-                pt = (float(p["center"][0]), float(p["center"][1]))
-                in_poly = cv2.pointPolygonTest(poly, pt, True) >= -3.0
-                in_cnt = cv2.pointPolygonTest(fc, pt, True) >= -3.0
+                pt = p.get("center_float", (float(p["center"][0]), float(p["center"][1])))
+                in_poly = cv2.pointPolygonTest(poly, pt, True) >= -2.5
+                in_cnt = cv2.pointPolygonTest(fc, pt, True) >= -2.5
                 if in_poly or in_cnt:
                     face_pips.append(p)
 
@@ -466,10 +476,11 @@ class RGBDieDetector:
         for f in visible_faces:
             f["is_top_face"] = f is top_f
 
-        # Draw pips
-        for p in valid_pips:
-            cv2.circle(step4_vis, p["center"], p["radius"], (0, 0, 255), 2)
-            cv2.circle(step4_vis, p["center"], 2, (0, 255, 0), -1)
+        # Draw pips belonging to visible faces
+        for f in visible_faces:
+            for p in f["pips"]:
+                cv2.circle(step4_vis, p["center"], p["radius"], (0, 0, 255), 2)
+                cv2.circle(step4_vis, p["center"], 2, (0, 255, 0), -1)
 
         # ── Step 5: Gather results ─────────────────────────────────────────
         total_pips = sum(f["num_pips"] for f in visible_faces)

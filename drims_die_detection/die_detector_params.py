@@ -119,6 +119,9 @@ class DieDetectorParams:
     canny_high_thresh: int = 130
     min_pips: int = 1
     max_pips: int = 6
+    min_pip_area_ratio: float = 0.001   # min pip area as fraction of crop (crop_w * crop_h)
+    max_pip_area_ratio: float = 0.08    # max pip area as fraction of crop (crop_w * crop_h)
+    max_pip_radius_ratio: float = 0.22  # max pip radius as fraction of min(crop_w, crop_h)
 
     # ── Clustering / height filter ─────────────────────────────────────────
     min_die_height_m: float = 0.003     # 3 mm above table
@@ -135,9 +138,9 @@ class DieDetectorParams:
         return os.path.abspath(os.path.join(PACKAGE_ROOT, self.output_dir))
 
     # ── ROS topics & services (used only by die_detector_node) ─────────────
-    rgb_topic: str = "/camera/color/image_raw"
-    depth_topic: str = "/camera/aligned_depth_to_color/image_raw"
-    camera_info_topic: str = "/camera/color/camera_info"
+    rgb_topic: str = "/wrist_camera/wrist_camera/color/image_raw"
+    depth_topic: str = "/wrist_camera/wrist_camera/aligned_depth_to_color/image_raw"
+    camera_info_topic: str = "/wrist_camera/wrist_camera/color/camera_info"
     pose_topic: str = "/dice/pose"
     debug_panels_topic: str = "/dice/debug_panels"
     top_down_topic: str = "/dice/top_down"
@@ -175,6 +178,46 @@ class DieDetectorParams:
         valid_fields = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
         filtered = {k: v for k, v in d.items() if k in valid_fields}
         return cls(**filtered)
+
+    def to_dict(self) -> dict:
+        """Export all parameters to a serializable dictionary."""
+        d = {}
+        for f in self.__dataclass_fields__.values():
+            val = getattr(self, f.name)
+            if isinstance(val, (list, tuple)):
+                d[f.name] = list(val)
+            else:
+                d[f.name] = val
+        return d
+
+    def save_to_yaml(self, path: str) -> None:
+        """Save parameters into a ROS 2 compatible YAML file preserving comments/format."""
+        if not HAS_YAML:
+            raise ImportError("PyYAML is required to save parameters to YAML.")
+
+        # Read existing file to preserve top-level keys if present
+        data = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as fh:
+                    data = yaml.safe_load(fh) or {}
+            except Exception:
+                pass
+
+        params_dict = self.to_dict()
+        # Filter internal-only keys
+        params_dict.pop("camera_frame_id", None)
+
+        if "die_detector_node" in data and "ros__parameters" in data["die_detector_node"]:
+            data["die_detector_node"]["ros__parameters"].update(params_dict)
+        elif "/**" in data and "ros__parameters" in data["/**"]:
+            data["/**"]["ros__parameters"].update(params_dict)
+        else:
+            data = {"die_detector_node": {"ros__parameters": params_dict}}
+
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "w") as fh:
+            yaml.dump(data, fh, default_flow_style=False, sort_keys=False)
 
     def log(self, logger=None) -> None:
         """Print all parameters (to *logger* if provided, otherwise stdout)."""

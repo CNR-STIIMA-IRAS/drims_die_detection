@@ -35,14 +35,18 @@ try:
     import message_filters
     HAS_ROS2 = True
     try:
-        from easy_motion_msgs.srv import DieIdentification3D
-        HAS_EASY_MOTION_MSGS = True
+        from drims_die_detection.srv import DieIdentification3D
+        HAS_DIE_SRV = True
     except ImportError:
-        HAS_EASY_MOTION_MSGS = False
-        DieIdentification3D = None
+        try:
+            from easy_motion_msgs.srv import DieIdentification3D
+            HAS_DIE_SRV = True
+        except ImportError:
+            HAS_DIE_SRV = False
+            DieIdentification3D = None
 except ImportError:
     HAS_ROS2 = False
-    HAS_EASY_MOTION_MSGS = False
+    HAS_DIE_SRV = False
     DieIdentification3D = None
 
 # The die detection library is always importable regardless of ROS
@@ -123,9 +127,11 @@ class DieDetectorNode(Node):
             clahe_clip_limit=_declare_and_get(self, "clahe_clip_limit", _g("clahe_clip_limit", 3.0)),
             pip_min_circularity=_declare_and_get(self, "pip_min_circularity", _g("pip_min_circularity", 0.45)),
             canny_low_thresh=_declare_and_get(self, "canny_low_thresh", _g("canny_low_thresh", 40)),
-            canny_high_thresh=_declare_and_get(self, "canny_high_thresh", _g("canny_high_thresh", 130)),
             min_pips=_declare_and_get(self, "min_pips", _g("min_pips", 1)),
             max_pips=_declare_and_get(self, "max_pips", _g("max_pips", 6)),
+            min_pip_area_ratio=_declare_and_get(self, "min_pip_area_ratio", _g("min_pip_area_ratio", 0.001)),
+            max_pip_area_ratio=_declare_and_get(self, "max_pip_area_ratio", _g("max_pip_area_ratio", 0.08)),
+            max_pip_radius_ratio=_declare_and_get(self, "max_pip_radius_ratio", _g("max_pip_radius_ratio", 0.22)),
             min_die_height_m=_declare_and_get(self, "min_die_height_m", _g("min_die_height_m", 0.003)),
             max_die_height_m=_declare_and_get(self, "max_die_height_m", _g("max_die_height_m", 0.065)),
             output_dir=_declare_and_get(self, "output_dir", _g("output_dir", "output")),
@@ -166,7 +172,7 @@ class DieDetectorNode(Node):
         self._plane_marker_pub = self.create_publisher(Marker, "/dice/fitted_plane_marker", 10)
 
         # Service
-        if HAS_EASY_MOTION_MSGS and DieIdentification3D is not None:
+        if HAS_DIE_SRV and DieIdentification3D is not None:
             self._service = self.create_service(
                 DieIdentification3D, p.service_name, self._die_identification_cb
             )
@@ -246,6 +252,7 @@ class DieDetectorNode(Node):
 
         stamp = rgb_msg.header.stamp
         frame_id = rgb_msg.header.frame_id or self._params.camera_frame_id
+        self._last_frame_id = frame_id
 
         # Publish PoseStamped
         centroid = result["centroid"]
@@ -254,6 +261,7 @@ class DieDetectorNode(Node):
 
         # Broadcast TF2 transforms
         self._broadcast_tf("die_top_face", centroid, quat, stamp, frame_id)
+        self._broadcast_tf("die", centroid, quat, stamp, frame_id)
         die_c = result["die_centroid_tf"]
         self._broadcast_tf("die_centroid", die_c, quat, stamp, frame_id)
 
@@ -357,7 +365,7 @@ class DieDetectorNode(Node):
         centroid = res["centroid"]
         quat = res["quaternion"]
         stamp = self.get_clock().now().to_msg()
-        frame_id = self._params.camera_frame_id
+        frame_id = getattr(self, "_last_frame_id", None) or self._params.camera_frame_id
 
         # Populate die_top_tf (TransformStamped)
         response.die_top_tf.header.stamp = stamp
@@ -370,6 +378,8 @@ class DieDetectorNode(Node):
         response.die_top_tf.transform.rotation.y = float(quat[1])
         response.die_top_tf.transform.rotation.z = float(quat[2])
         response.die_top_tf.transform.rotation.w = float(quat[3])
+        self._tf_broadcaster.sendTransform(response.die_top_tf)
+        self._broadcast_tf("die", centroid, quat, stamp, frame_id)
 
         # Populate die_top_pose (PoseStamped)
         response.die_top_pose.header.stamp = stamp
@@ -386,6 +396,10 @@ class DieDetectorNode(Node):
         response.front_face = str(front_str)
         response.top_face_pips = int(top_pips) if top_pips is not None else 0
         response.front_face_pips = int(front_pips) if front_pips is not None else 0
+        if hasattr(response, "face_number"):
+            response.face_number = response.top_face_pips
+        if hasattr(response, "pose"):
+            response.pose = response.die_top_pose
         response.success = True
         return response
 
