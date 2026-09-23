@@ -75,9 +75,9 @@ class TestDieDetectorParamsDefaults(unittest.TestCase):
 
     def test_ros_topic_defaults(self):
         p = DieDetectorParams()
-        self.assertEqual(p.rgb_topic, "/camera/color/image_raw")
-        self.assertEqual(p.depth_topic, "/camera/aligned_depth_to_color/image_raw")
-        self.assertEqual(p.camera_info_topic, "/camera/color/camera_info")
+        self.assertEqual(p.rgb_topic, "/wrist_camera/wrist_camera/color/image_raw")
+        self.assertEqual(p.depth_topic, "/wrist_camera/wrist_camera/aligned_depth_to_color/image_raw")
+        self.assertEqual(p.camera_info_topic, "/wrist_camera/wrist_camera/color/camera_info")
         self.assertEqual(p.debug_panels_topic, "/dice/debug_panels")
 
 

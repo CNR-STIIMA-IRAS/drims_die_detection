@@ -33,18 +33,21 @@ try:
     from tf2_ros import TransformBroadcaster
     from cv_bridge import CvBridge
     import message_filters
-    from drims_homework_interfaces.srv import DieIdentification3D
     HAS_ROS2 = True
     try:
         from drims_die_detection.srv import DieIdentification3D
         HAS_DIE_SRV = True
     except ImportError:
         try:
-            from easy_motion_msgs.srv import DieIdentification3D
+            from drims_homework_interfaces.srv import DieIdentification3D
             HAS_DIE_SRV = True
         except ImportError:
-            HAS_DIE_SRV = False
-            DieIdentification3D = None
+            try:
+                from easy_motion_msgs.srv import DieIdentification3D
+                HAS_DIE_SRV = True
+            except ImportError:
+                HAS_DIE_SRV = False
+                DieIdentification3D = None
 except ImportError:
     HAS_ROS2 = False
     HAS_DIE_SRV = False
@@ -145,6 +148,15 @@ class DieDetectorNode(Node):
             debug_panels_topic=_declare_and_get(self, "debug_panels_topic", _g("debug_panels_topic", "/dice/debug_panels")),
             top_down_topic=_declare_and_get(self, "top_down_topic", _g("top_down_topic", "/dice/top_down")),
             service_name=_declare_and_get(self, "service_name", _g("service_name", "die_identification")),
+            enable_pose_filter=_declare_and_get(self, "enable_pose_filter", _g("enable_pose_filter", False)),
+            pose_filter_alpha_trans=_declare_and_get(self, "pose_filter_alpha_trans", _g("pose_filter_alpha_trans", 1.0)),
+            pose_filter_alpha_rot=_declare_and_get(self, "pose_filter_alpha_rot", _g("pose_filter_alpha_rot", 1.0)),
+            pose_filter_trans_jump_m=_declare_and_get(self, "pose_filter_trans_jump_m", _g("pose_filter_trans_jump_m", 0.08)),
+            pose_filter_rot_jump_deg=_declare_and_get(self, "pose_filter_rot_jump_deg", _g("pose_filter_rot_jump_deg", 45.0)),
+            pose_filter_deadband_trans_m=_declare_and_get(self, "pose_filter_deadband_trans_m", _g("pose_filter_deadband_trans_m", 0.0015)),
+            pose_filter_deadband_rot_deg=_declare_and_get(self, "pose_filter_deadband_rot_deg", _g("pose_filter_deadband_rot_deg", 0.5)),
+            enable_pip_filter=_declare_and_get(self, "enable_pip_filter", _g("enable_pip_filter", False)),
+            pip_filter_window=_declare_and_get(self, "pip_filter_window", _g("pip_filter_window", 1)),
         )
         self._params = p
         p.log(self.get_logger())
@@ -249,6 +261,7 @@ class DieDetectorNode(Node):
         except Exception as exc:
             import traceback
             self.get_logger().error(f"Pipeline error: {exc}\n{traceback.format_exc()}")
+            self._pipeline.reset_tracking()
             return
 
         stamp = rgb_msg.header.stamp
@@ -417,8 +430,8 @@ class DieDetectorNode(Node):
 # ──────────────────────────────────────────────────────────────────────────
 def main(args=None) -> None:
     if not HAS_ROS2:
-        print("[ERROR] rclpy / cv_bridge not available. "
-              "Source ROS 2 Humble and rebuild the workspace.")
+        print("[ERROR] ROS 2 core packages (rclpy / cv_bridge) not available. "
+              "Source your ROS 2 environment and rebuild the workspace.")
         return
 
     rclpy.init(args=args)

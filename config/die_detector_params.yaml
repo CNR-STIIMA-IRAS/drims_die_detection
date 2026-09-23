@@ -23,20 +23,20 @@ die_detector_node:
     hsv_min:
     - 0
     - 0
-    - 165
+    - 160
     hsv_max:
     - 180
-    - 170
+    - 95
     - 255
-    glare_v_thresh: 220
+    glare_v_thresh: 240
     num_color_clusters: 5
     pip_min_circularity: 0.28
-    clahe_clip_limit: 2.5
+    clahe_clip_limit: 1.5
     canny_low_thresh: 35
     canny_high_thresh: 130
     min_pips: 1
     max_pips: 6
-    min_pip_area_ratio: 0.003
+    min_pip_area_ratio: 0.005
     max_pip_area_ratio: 0.05
     max_pip_radius_ratio: 0.18
     pose_topic: /dice/pose
@@ -45,6 +45,19 @@ die_detector_node:
     service_name: die_identification_3d
     cx: null
     cy: null
+    adaptive_thresh_block_size: 27
+    adaptive_thresh_c: 4
+    morph_open_kernel_size: 3
+    pip_area_outlier_ratio: 0.25
+    enable_pose_filter: false
+    pose_filter_alpha_trans: 1.0
+    pose_filter_alpha_rot: 1.0
+    pose_filter_trans_jump_m: 0.08
+    pose_filter_rot_jump_deg: 45.0
+    pose_filter_deadband_trans_m: 0.0015
+    pose_filter_deadband_rot_deg: 0.5
+    enable_pip_filter: false
+    pip_filter_window: 1
 rgbd_mock_publisher:
   ros__parameters:
     frame_id: head_front_camera_color_optical_frame

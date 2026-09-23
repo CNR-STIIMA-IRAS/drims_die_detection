@@ -46,6 +46,7 @@ from .rgb_die_detector import RGBDieDetector
 from .alignment_projection import AlignmentAndProjection
 from .pip_detector import PipDetector
 from .pose_estimator import PoseEstimator
+from .pose_stabilizer import PoseStabilizer
 from .plotly_visualizer import PlotlyVisualizer
 from .die_orientation import resolve_die_orientation
 
@@ -69,10 +70,16 @@ class DieDetectorPipeline:
         self._align = AlignmentAndProjection(self.params)
         self._pip_det = PipDetector(self.params)
         self._pose_est = PoseEstimator(self.params)
+        self._stabilizer = PoseStabilizer(self.params)
         self._plotly = PlotlyVisualizer(self.params)
 
         if self.params.debug:
             self.params.log()
+
+    def reset_tracking(self) -> None:
+        """Reset temporal pose filtering and tracking history."""
+        self._stabilizer.reset()
+        self._pose_est.reset_tracking()
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
@@ -137,6 +144,11 @@ class DieDetectorPipeline:
             table_points = points
 
         plane_model, inliers, outliers, normal = self._pc_proc.fit_plane_ransac(table_points)
+        A_p, B_p, C_p, D_p = plane_model
+
+        # Temporal plane smoothing
+        normal, D_p = self._stabilizer.filter_plane(normal, D_p)
+        plane_model = (float(normal[0]), float(normal[1]), float(normal[2]), float(D_p))
         A_p, B_p, C_p, D_p = plane_model
         self._log(f"Step 3: Plane normal={normal}, D={D_p:.4f} (fit on {len(table_points)} background points).")
 
@@ -224,6 +236,9 @@ class DieDetectorPipeline:
             camera_params=cam_params,
         )
 
+        # Apply temporal pose stabilization (filtering centroid & orientation)
+        centroid, quat, R_die, (x_ax, y_ax, z_ax) = self._stabilizer.filter_pose(centroid, quat)
+
         top_pips = top_face["num_pips"] if (top_face is not None and top_face.get("is_trusted", True)) else total_pips
         x_pos_pips = primary_lat["num_pips"] if (primary_lat is not None and primary_lat.get("is_trusted", True)) else None
         y_pos_pips = lat_faces[1]["num_pips"] if (len(lat_faces) >= 2 and lat_faces[1].get("is_trusted", True)) else None
@@ -267,8 +282,11 @@ class DieDetectorPipeline:
         top_pips = top_face.get("num_pips", 0) if top_valid else None
         front_pips = primary_lat.get("num_pips", 0) if front_valid else None
 
-        top_str = str(top_pips) if top_valid else "None"
-        front_str = str(front_pips) if front_valid else "None"
+        # Apply pip temporal consensus filtering
+        top_pips, front_pips = self._stabilizer.filter_pips(top_pips, front_pips)
+
+        top_str = str(top_pips) if top_pips is not None else "None"
+        front_str = str(front_pips) if front_pips is not None else "None"
 
         badge_text = f"TOP FACE: {top_str} | FRONT FACE: {front_str}"
 

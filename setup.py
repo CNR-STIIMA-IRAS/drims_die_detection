@@ -28,6 +28,9 @@ setup(
          glob("test_images/rgb/*")),
         (os.path.join("share", package_name, "test_images", "depth"),
          glob("test_images/depth/*")),
+        # calibration data
+        (os.path.join("share", package_name, "calibration_data"),
+         glob("calibration_data/*")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

@@ -23,6 +23,7 @@ from .rgb_die_detector import RGBDieDetector
 from .alignment_projection import AlignmentAndProjection
 from .pip_detector import PipDetector
 from .pose_estimator import PoseEstimator
+from .pose_stabilizer import PoseStabilizer
 from .plotly_visualizer import PlotlyVisualizer
 from .die_detector_pipeline import DieDetectorPipeline
 from .die_orientation import resolve_die_orientation
@@ -35,6 +36,7 @@ __all__ = [
     "AlignmentAndProjection",
     "PipDetector",
     "PoseEstimator",
+    "PoseStabilizer",
     "PlotlyVisualizer",
     "DieDetectorPipeline",
     "resolve_die_orientation",

@@ -94,6 +94,58 @@ class TestPoseEstimatorBackprojection(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(centroid)), msg="Centroid contains non-finite values")
         self.assertAlmostEqual(np.linalg.norm(quat), 1.0, places=3)
 
+    def test_orientation_x_points_right_and_y_points_up_across_rotations(self):
+        """Verify that x points right and y points up for arbitrary top face rotations."""
+        pts = np.random.randn(50, 3).astype(np.float32) * 0.02 + np.array([0.0, 0.0, 1.0])
+        normal = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+        R_plane = np.eye(3, dtype=np.float32)
+        cam = (500.0, 500.0, 320.0, 240.0)
+        plane_D = 1.0
+        centroid_2d = (320.0, 240.0)
+
+        # Base square centered at (320, 240)
+        base_corners = np.array([[-30, -30], [30, -30], [30, 30], [-30, 30]], dtype=np.float32)
+
+        for deg in [0, 15, 30, 45, 60, 90, 120, 135, 180, 225, 270, 315]:
+            rad = np.radians(deg)
+            c, s = np.cos(rad), np.sin(rad)
+            R2d = np.array([[c, -s], [s, c]], dtype=np.float32)
+            rot_corners = (base_corners @ R2d.T) + np.array([320.0, 240.0], dtype=np.float32)
+            poly = rot_corners.reshape(-1, 1, 2).astype(np.int32)
+
+            # Use fresh estimator to test static orientation without hysteresis bias
+            est = PoseEstimator(DieDetectorParams(debug=False, die_size_m=0.05, enable_pose_filter=False))
+            _, _, R_die, (x_ax, y_ax, z_ax) = est.compute_pose(
+                pts, normal, R_plane,
+                top_face_polygon=poly,
+                top_face_centroid_2d=centroid_2d,
+                plane_D=plane_D,
+                camera_params=cam,
+            )
+
+            # In camera optical frame:
+            # Camera Right is +X = [1, 0, 0]
+            # Camera Up is -Y = [0, -1, 0]
+            cam_right = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            cam_up = np.array([0.0, -1.0, 0.0], dtype=np.float32)
+
+            dot_right = float(np.dot(x_ax, cam_right))
+            dot_up = float(np.dot(y_ax, cam_up))
+
+            self.assertGreaterEqual(
+                dot_right, 0.65,
+                f"At {deg} deg: x_axis {x_ax} does not point right (dot_right={dot_right:.3f})"
+            )
+            self.assertGreaterEqual(
+                dot_up, 0.65,
+                f"At {deg} deg: y_axis {y_ax} does not point up (dot_up={dot_up:.3f})"
+            )
+
+            # Check right-handed orthogonality
+            np.testing.assert_allclose(np.dot(x_ax, y_ax), 0.0, atol=1e-3)
+            np.testing.assert_allclose(np.cross(x_ax, y_ax), z_ax, atol=1e-3)
+
 
 if __name__ == "__main__":
     unittest.main()
+

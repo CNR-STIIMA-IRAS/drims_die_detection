@@ -122,10 +122,25 @@ class DieDetectorParams:
     min_pip_area_ratio: float = 0.001   # min pip area as fraction of crop (crop_w * crop_h)
     max_pip_area_ratio: float = 0.08    # max pip area as fraction of crop (crop_w * crop_h)
     max_pip_radius_ratio: float = 0.22  # max pip radius as fraction of min(crop_w, crop_h)
+    adaptive_thresh_block_size: int = 15  # Gaussian adaptive threshold block size
+    adaptive_thresh_c: int = 4            # Gaussian adaptive threshold C constant
+    morph_open_kernel_size: int = 5       # Kernel size for pip opening filter
+    pip_area_outlier_ratio: float = 0.30  # Rejects pips smaller than ratio * median(pip_areas)
 
     # ── Clustering / height filter ─────────────────────────────────────────
     min_die_height_m: float = 0.003     # 3 mm above table
     max_die_height_m: float = 0.065     # 6.5 cm above table
+
+    # ── Pose Stabilization / Temporal Filtering ────────────────────────────
+    enable_pose_filter: bool = False
+    pose_filter_alpha_trans: float = 1.0          # 1.0 = raw instantaneous update, no lag
+    pose_filter_alpha_rot: float = 1.0            # 1.0 = raw instantaneous update, no lag
+    pose_filter_trans_jump_m: float = 0.08        # Reset threshold for position (8 cm)
+    pose_filter_rot_jump_deg: float = 45.0        # Reset threshold for orientation (45 deg)
+    pose_filter_deadband_trans_m: float = 0.0015  # Deadband for position jitter (1.5 mm)
+    pose_filter_deadband_rot_deg: float = 0.5     # Deadband for orientation jitter (0.5 deg)
+    enable_pip_filter: bool = False               # False = instantaneous update, no lag
+    pip_filter_window: int = 1                    # Window size (frames) for pip temporal voting
 
     # ── Output ─────────────────────────────────────────────────────────────
     output_dir: str = "output"

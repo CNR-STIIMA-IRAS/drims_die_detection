@@ -1,0 +1,351 @@
+calibration_info:
+  timestamp: '2026-09-22T20:02:40'
+  test_mode: extended
+  accuracy: 2/6
+  accuracy_percent: 33.33
+  average_stability_percent: 96.15
+  score: 2999.08
+per_face_results:
+  face_1:
+    expected_pips: 1
+    detected_pips: 1
+    detected_summary: '1'
+    stability_percent: 100.0
+    circularity: 0.9098
+    num_faces_detected: 0
+    is_correct: true
+    positions:
+      center:
+        expected_pips: 1
+        detected_pips: 1
+        detected_summary: '1'
+        stability_percent: 100.0
+        circularity: 0.92
+        is_correct: true
+      top_left:
+        expected_pips: 1
+        detected_pips: 1
+        detected_summary: '1'
+        stability_percent: 100.0
+        circularity: 0.8964
+        is_correct: true
+      top_right:
+        expected_pips: 1
+        detected_pips: 1
+        detected_summary: '1'
+        stability_percent: 100.0
+        circularity: 0.9131
+        is_correct: true
+      bottom_right:
+        expected_pips: 1
+        detected_pips: 1
+        detected_summary: '1'
+        stability_percent: 100.0
+        circularity: 0.9217
+        is_correct: true
+      bottom_left:
+        expected_pips: 1
+        detected_pips: 1
+        detected_summary: '1'
+        stability_percent: 100.0
+        circularity: 0.898
+        is_correct: true
+  face_2:
+    expected_pips: 2
+    detected_pips: 2
+    detected_summary: '2'
+    stability_percent: 100.0
+    circularity: 0.8924
+    num_faces_detected: 0
+    is_correct: true
+    positions:
+      center:
+        expected_pips: 2
+        detected_pips: 2
+        detected_summary: '2'
+        stability_percent: 100.0
+        circularity: 0.8952
+        is_correct: true
+      top_left:
+        expected_pips: 2
+        detected_pips: 2
+        detected_summary: '2'
+        stability_percent: 100.0
+        circularity: 0.8705
+        is_correct: true
+      top_right:
+        expected_pips: 2
+        detected_pips: 2
+        detected_summary: '2'
+        stability_percent: 100.0
+        circularity: 0.8945
+        is_correct: true
+      bottom_right:
+        expected_pips: 2
+        detected_pips: 2
+        detected_summary: '2'
+        stability_percent: 100.0
+        circularity: 0.9046
+        is_correct: true
+      bottom_left:
+        expected_pips: 2
+        detected_pips: 2
+        detected_summary: '2'
+        stability_percent: 100.0
+        circularity: 0.8971
+        is_correct: true
+  face_3:
+    expected_pips: 3
+    detected_pips: 3
+    detected_summary: '3'
+    stability_percent: 96.9
+    circularity: 0.898
+    num_faces_detected: 0
+    is_correct: false
+    positions:
+      center:
+        expected_pips: 3
+        detected_pips: 3
+        detected_summary: '3'
+        stability_percent: 100.0
+        circularity: 0.9032
+        is_correct: true
+      top_left:
+        expected_pips: 3
+        detected_pips: 3
+        detected_summary: 3, 4 (Jitter)
+        stability_percent: 87.5
+        circularity: 0.8867
+        is_correct: true
+      top_right:
+        expected_pips: 3
+        detected_pips: 3
+        detected_summary: '3'
+        stability_percent: 100.0
+        circularity: 0.903
+        is_correct: true
+      bottom_right:
+        expected_pips: 3
+        detected_pips: 3
+        detected_summary: '3'
+        stability_percent: 100.0
+        circularity: 0.8991
+        is_correct: true
+      bottom_left:
+        expected_pips: 3
+        detected_pips: 4
+        detected_summary: '4'
+        stability_percent: 0.0
+        circularity: 0.7598
+        is_correct: false
+  face_4:
+    expected_pips: 4
+    detected_pips: 4
+    detected_summary: '4'
+    stability_percent: 87.5
+    circularity: 0.8859
+    num_faces_detected: 0
+    is_correct: false
+    positions:
+      center:
+        expected_pips: 4
+        detected_pips: 4
+        detected_summary: '4'
+        stability_percent: 100.0
+        circularity: 0.8954
+        is_correct: true
+      top_left:
+        expected_pips: 4
+        detected_pips: 4
+        detected_summary: 4, 5 (Jitter)
+        stability_percent: 50.0
+        circularity: 0.8568
+        is_correct: false
+      top_right:
+        expected_pips: 4
+        detected_pips: 4
+        detected_summary: '4'
+        stability_percent: 100.0
+        circularity: 0.8768
+        is_correct: true
+      bottom_right:
+        expected_pips: 4
+        detected_pips: 4
+        detected_summary: '4'
+        stability_percent: 100.0
+        circularity: 0.9147
+        is_correct: true
+      bottom_left:
+        expected_pips: 4
+        detected_pips: 6
+        detected_summary: '6'
+        stability_percent: 0.0
+        circularity: 0.7418
+        is_correct: false
+  face_5:
+    expected_pips: 5
+    detected_pips: 5
+    detected_summary: '5'
+    stability_percent: 100.0
+    circularity: 0.8951
+    num_faces_detected: 0
+    is_correct: false
+    positions:
+      center:
+        expected_pips: 5
+        detected_pips: 5
+        detected_summary: '5'
+        stability_percent: 100.0
+        circularity: 0.8851
+        is_correct: true
+      top_left:
+        expected_pips: 5
+        detected_pips: 6
+        detected_summary: '6'
+        stability_percent: 0.0
+        circularity: 0.7803
+        is_correct: false
+      top_right:
+        expected_pips: 5
+        detected_pips: 6
+        detected_summary: '6'
+        stability_percent: 0.0
+        circularity: 0.8039
+        is_correct: false
+      bottom_right:
+        expected_pips: 5
+        detected_pips: 5
+        detected_summary: '5'
+        stability_percent: 100.0
+        circularity: 0.9023
+        is_correct: true
+      bottom_left:
+        expected_pips: 5
+        detected_pips: 5
+        detected_summary: '5'
+        stability_percent: 100.0
+        circularity: 0.8979
+        is_correct: true
+  face_6:
+    expected_pips: 6
+    detected_pips: 6
+    detected_summary: '6'
+    stability_percent: 92.5
+    circularity: 0.8904
+    num_faces_detected: 0
+    is_correct: false
+    positions:
+      center:
+        expected_pips: 6
+        detected_pips: 6
+        detected_summary: '6'
+        stability_percent: 100.0
+        circularity: 0.9024
+        is_correct: true
+      top_left:
+        expected_pips: 6
+        detected_pips: 6
+        detected_summary: 4, 5, 6 (Jitter)
+        stability_percent: 62.5
+        circularity: 0.8697
+        is_correct: false
+      top_right:
+        expected_pips: 6
+        detected_pips: 6
+        detected_summary: '6'
+        stability_percent: 100.0
+        circularity: 0.8982
+        is_correct: true
+      bottom_right:
+        expected_pips: 6
+        detected_pips: 6
+        detected_summary: '6'
+        stability_percent: 100.0
+        circularity: 0.8886
+        is_correct: true
+      bottom_left:
+        expected_pips: 6
+        detected_pips: 6
+        detected_summary: '6'
+        stability_percent: 100.0
+        circularity: 0.8929
+        is_correct: true
+optimal_parameters:
+  hsv_min:
+  - 0
+  - 0
+  - 160
+  hsv_max:
+  - 180
+  - 95
+  - 255
+  glare_v_thresh: 240
+  clahe_clip_limit: 1.5
+  adaptive_thresh_block_size: 27
+  adaptive_thresh_c: 4
+  morph_open_kernel_size: 3
+  canny_low_thresh: 35
+  canny_high_thresh: 130
+  pip_min_circularity: 0.28
+  min_pip_area_ratio: 0.005
+  max_pip_area_ratio: 0.05
+  max_pip_radius_ratio: 0.18
+  pip_area_outlier_ratio: 0.25
+full_detector_parameters:
+  debug: 0
+  visualize: 0
+  save: 0
+  fx: 918.8717651367188
+  fy: 649.647705078125
+  cx: null
+  cy: null
+  depth_model: Intel/dpt-hybrid-midas
+  depth_scale: 0.001
+  use_monocular_fallback: 0
+  ransac_distance_threshold: 0.01
+  ransac_max_iterations: 200
+  die_color: white
+  num_color_clusters: 5
+  die_size_m: 0.04
+  detection_mode: hsv
+  hsv_min:
+  - 0
+  - 0
+  - 160
+  hsv_max:
+  - 180
+  - 95
+  - 255
+  glare_v_thresh: 240
+  clahe_clip_limit: 1.5
+  pip_min_circularity: 0.28
+  canny_low_thresh: 35
+  canny_high_thresh: 130
+  min_pips: 1
+  max_pips: 6
+  min_pip_area_ratio: 0.005
+  max_pip_area_ratio: 0.05
+  max_pip_radius_ratio: 0.18
+  adaptive_thresh_block_size: 27
+  adaptive_thresh_c: 4
+  morph_open_kernel_size: 3
+  pip_area_outlier_ratio: 0.25
+  min_die_height_m: 0.005
+  max_die_height_m: 0.065
+  enable_pose_filter: 0
+  pose_filter_alpha_trans: 1.0
+  pose_filter_alpha_rot: 1.0
+  pose_filter_trans_jump_m: 0.08
+  pose_filter_rot_jump_deg: 45.0
+  pose_filter_deadband_trans_m: 0.0015
+  pose_filter_deadband_rot_deg: 0.5
+  enable_pip_filter: 0
+  pip_filter_window: 1
+  output_dir: output
+  rgb_topic: /wrist_camera/wrist_camera/color/image_raw
+  depth_topic: /wrist_camera/wrist_camera/aligned_depth_to_color/image_raw
+  camera_info_topic: /wrist_camera/wrist_camera/color/camera_info
+  pose_topic: /dice/pose
+  debug_panels_topic: /dice/debug_panels
+  top_down_topic: /dice/top_down
+  service_name: die_identification_3d

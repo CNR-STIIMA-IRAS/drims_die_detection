@@ -36,6 +36,7 @@ install(DIRECTORY
   launch
   config
   rviz
+  calibration_data
   DESTINATION share/${PROJECT_NAME}
 )
 
