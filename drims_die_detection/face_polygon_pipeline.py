@@ -56,7 +56,7 @@ class FacePolygonPipeline:
         if detection_mode == "yoloe":
             model = self._det._get_yoloe_model()
             if model is None:
-                raise RuntimeError("YOLOE model could not be loaded (is ultralytics installed?)")
+                raise RuntimeError(f"YOLOE model could not be loaded: {self._det.yoloe_error}")
             predict = model.predict
 
             def timed_predict(*a, **k):       # force the device and time YOLOE separately

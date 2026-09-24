@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from itertools import combinations
 
 import cv2
@@ -59,6 +60,7 @@ class RGBDieDetector:
         self.params = params or DieDetectorParams()
         self._log = self._make_logger()
         self._yoloe_model = None
+        self.yoloe_error = ""  # why the YOLOE load failed (shown by the pipelines' RuntimeError)
 
     def _get_yoloe_model(self):
         """Lazy loader for Ultralytics YOLOE model."""
@@ -82,6 +84,10 @@ class RGBDieDetector:
                 self._log(f"Loaded YOLOE model '{model_name}' with classes: {classes}")
             except Exception as e:
                 self._log(f"Failed to load YOLOE model: {e}")
+                self.yoloe_error = f"{type(e).__name__}: {e} (Python: {sys.executable})"
+                if isinstance(e, ImportError):
+                    self.yoloe_error += (" — this Python does not see the venv packages: activate .venv-docker, "
+                                         "then ros2 launch, or ros2 run --prefix \"$VIRTUAL_ENV/bin/python3\"")
                 self._yoloe_model = False
         return self._yoloe_model if self._yoloe_model is not False else None
 

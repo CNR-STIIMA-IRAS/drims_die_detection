@@ -54,9 +54,10 @@ class SilhouettePipeline:
         self.params = params or DieDetectorParams()
         self.device = resolve_device(self.params.device)
         # YOLOE loading (weights resolved inside <pkg>/weights) lives in RGBDieDetector
-        self._yoloe = RGBDieDetector(self.params)._get_yoloe_model()
+        yoloe_det = RGBDieDetector(self.params)
+        self._yoloe = yoloe_det._get_yoloe_model()
         if self._yoloe is None:
-            raise RuntimeError("YOLOE model could not be loaded (is ultralytics installed?)")
+            raise RuntimeError(f"YOLOE model could not be loaded: {yoloe_det.yoloe_error}")
         # Colour-segmentation fallback (classical Steps 1-2 of RGBDieDetector)
         self._color_det = None
         if self.params.color_fallback:

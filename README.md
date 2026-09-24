@@ -5,6 +5,36 @@
 
 ---
 
+## TL;DR
+
+Run from the workspace root (the folder that contains `src/`):
+
+```bash
+# 1. One-time: Python deps in the venv + model weights (not tracked by git)
+src/drims_die_detection/setup_venv_docker.sh   # .venv-docker: CUDA torch, ultralytics, clip, requirements.txt
+src/drims_die_detection/download_weights.sh    # die CNN + YOLOE + MobileCLIP -> weights/
+
+# 2. Build, with the venv NOT active
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-up-to drims_die_detection
+source install/setup.bash
+
+# 3. In every terminal that starts the node: source ROS + workspace, activate the venv, launch
+source /opt/ros/humble/setup.bash && source install/setup.bash
+source src/drims_die_detection/.venv-docker/bin/activate
+ros2 launch drims_die_detection die_detector.launch.py
+```
+
+- Step 1 is needed again only when the requirements or the weights change. After
+  editing a `.py` file no rebuild is needed (`--symlink-install`).
+- `ros2 launch` runs the node with the active venv's Python by itself. `ros2 run`
+  does not, so pass it: `ros2 run --prefix "$VIRTUAL_ENV/bin/python3" drims_die_detection die_detector_node.py`.
+- Activating the venv does not affect the other ROS nodes, but do not run `colcon build`
+  with it active. See [ROS 2 Node](#ros-2-node) for why, and for the pipelines, topics
+  and launch arguments.
+
+---
+
 ## Overview
 
 This package processes RGB-D images of a scene containing a die resting on a flat
@@ -183,7 +213,7 @@ pip install -r requirements.txt
 
 ### Docker container — CNN training & YOLOE
 
-Inside the ROS 2 Humble container, use the dedicated `.venv-docker` (Python 3.10, CUDA 12.8 PyTorch, ultralytics, wandb). It sees the system/ROS packages and lives on the mounted workspace, so it survives container restarts:
+Inside the ROS 2 Humble container, use the dedicated `.venv-docker` (Python 3.10, CUDA 12.8 PyTorch, ultralytics + Ultralytics' `clip` fork for YOLOE's text prompts, wandb). It sees the system/ROS packages and lives on the mounted workspace, so it survives container restarts:
 
 ```bash
 ./setup_venv_docker.sh                    # one-time
@@ -205,10 +235,15 @@ Weights are not tracked by git: `./download_weights.sh` fetches the die CNN (Git
 # 1. Source ROS 2 Humble
 source /opt/ros/humble/setup.bash
 
-# 2. Install Python dependencies
+# 2. Install Python dependencies: ONLY if the node will not run with the venv.
+#    With .venv-docker (recommended, see "ROS 2 Node" below) skip this step:
+#    setup_venv_docker.sh already installs requirements.txt into the venv.
+#    Without the venv this installs into the system Python and covers only the
+#    `classical` pipeline (no ultralytics / clip, so no YOLOE).
 pip install -r requirements.txt
 
 # 3. Build the package
+cd ../.. # go to the workspace root
 colcon build --packages-select drims_die_detection --symlink-install
 source install/setup.bash
 ```
@@ -298,16 +333,38 @@ cv2.waitKey(0)
 
 #### 1. One-time setup
 
-The YOLOE / CNN pipelines need torch + ultralytics from the container venv
-(`./setup_venv_docker.sh`, see Installation). When a venv is active, the launch
-file runs the node with that venv's Python automatically.
+The YOLOE / CNN pipelines need torch, ultralytics and Ultralytics' `clip` from
+the container venv (`./setup_venv_docker.sh`, see Installation). Build **without**
+the venv active, then activate it in the terminal that starts the node:
 
 ```bash
 source /opt/ros/humble/setup.bash
 cd /home/ws && colcon build --symlink-install --packages-select drims_die_detection
 source install/setup.bash
-source src/drims_die_detection/.venv-docker/bin/activate    # in every new terminal
+source src/drims_die_detection/.venv-docker/bin/activate    # in every terminal that starts the node
+
+ros2 launch drims_die_detection die_detector.launch.py      # uses $VIRTUAL_ENV/bin/python3 by itself
+ros2 run --prefix "$VIRTUAL_ENV/bin/python3" drims_die_detection die_detector_node.py
 ```
+
+Why it works this way, and why it is safe for the rest of ROS:
+
+- colcon writes the Python that ran the build into the installed wrapper's shebang
+  (`#!/usr/bin/python3`). Activating the venv does not change that, so a plain
+  `ros2 run` still starts the system Python, which has no ultralytics. The launch
+  file passes `$VIRTUAL_ENV/bin/python3` as the node's `prefix`; `ros2 run` needs
+  `--prefix`.
+- For the same reason, activating the venv changes nothing for the other nodes:
+  `ros2` itself and every other Python node keep their `/usr/bin/python3`
+  shebang, and C++ nodes are binaries. Only the detector runs with the venv.
+- The venv is created with `--system-site-packages`, so the detector still sees
+  `rclpy`, `cv_bridge` and the message packages. `requirements.txt` pins
+  `numpy<2`, which `cv_bridge` needs.
+- Do not run `colcon build` with the venv active: the rebuilt wrappers then point
+  at the venv's Python, and the next plain `colcon build` silently switches them back.
+
+If YOLOE fails to load, the node's `RuntimeError` names the real exception and the
+Python that ran it.
 
 #### 2. Choose a pipeline (`pose_method`)
 
