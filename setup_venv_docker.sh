@@ -31,9 +31,14 @@ echo "=== Installing PyTorch from ${TORCH_INDEX} ==="
 echo "=== Installing detection (requirements.txt) + training dependencies ==="
 # requirements.txt pins numpy<2, which ROS 2 Humble's cv_bridge also needs;
 # torch is already satisfied by the CUDA build above, so pip keeps it.
-"${VENV_DIR}/bin/pip" install -r "${SCRIPT_DIR}/requirements.txt" ultralytics wandb tqdm pyrender trimesh
+# Ultralytics' CLIP fork provides the tokenizer of YOLOE's MobileCLIP text encoder
+# (set_classes). It is not a pip dependency of ultralytics, which otherwise installs
+# it on the node's first launch and fails that launch ("No module named 'clip'").
+"${VENV_DIR}/bin/pip" install -r "${SCRIPT_DIR}/requirements.txt" ultralytics \
+    "git+https://github.com/ultralytics/CLIP.git" wandb tqdm pyrender trimesh
 
 "${VENV_DIR}/bin/python3" -c "import torch; print(f'torch {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
+"${VENV_DIR}/bin/python3" -c "import ultralytics, clip; print(f'ultralytics {ultralytics.__version__}, clip OK')"
 
 echo "=== Setup complete! ==="
 echo "Activate with:  source ${VENV_DIR}/bin/activate"

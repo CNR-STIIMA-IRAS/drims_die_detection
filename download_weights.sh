@@ -10,6 +10,10 @@
 #   die_mobilenet_v3.pt                  our trained CNN: a GitHub release asset of this
 #                                        repo, or Google Drive (DIE_CNN_URL=gdrive:<file-id>)
 #
+# YOLOE's class prompts also need the `clip` Python package (MobileCLIP tokenizer). It is
+# not a weight file: setup_venv_docker.sh installs it; this script only checks that the
+# node's Python ($VIRTUAL_ENV, else .venv-docker, else python3) can import it.
+#
 # Override the CNN source / checksum without editing the script:
 #   DIE_CNN_URL=gdrive:1AbC...xyz DIE_CNN_SHA256=<sha256> ./download_weights.sh
 # After retraining: upload the new file, then update DIE_CNN_URL / DIE_CNN_SHA256 below
@@ -36,7 +40,7 @@ for arg in "$@"; do
     case "$arg" in
         --force) FORCE=1 ;;
         --no-yoloe) SKIP_YOLOE=1 ;;
-        -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
         *) echo "Unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -82,6 +86,24 @@ for entry in "${FILES[@]}"; do
     mv "${dest}.part" "$dest"
     echo "✓ ${name}"
 done
+
+# Without `clip`, ultralytics pip-installs it on the node's first launch, which fails
+# that launch and needs internet access at that point
+if [ "$SKIP_YOLOE" = 0 ]; then
+    if [ -n "${VIRTUAL_ENV:-}" ]; then
+        py="${VIRTUAL_ENV}/bin/python3"
+    elif [ -x "${SCRIPT_DIR}/.venv-docker/bin/python3" ]; then
+        py="${SCRIPT_DIR}/.venv-docker/bin/python3"
+    else
+        py="python3"
+    fi
+    if "$py" -c "import clip" 2>/dev/null; then
+        echo "✓ clip (${py})"
+    else
+        echo "⚠ ${py} cannot import 'clip', needed by YOLOE's MobileCLIP text encoder. Install it with" >&2
+        echo "  ./setup_venv_docker.sh   or   ${py} -m pip install git+https://github.com/ultralytics/CLIP.git" >&2
+    fi
+fi
 
 if [ "$failed" = 1 ]; then
     echo "Some weights could not be downloaded — see above." >&2
