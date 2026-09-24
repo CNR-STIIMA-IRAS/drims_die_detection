@@ -1,5 +1,27 @@
 die_detector_node:
   ros__parameters:
+    # ── Pose method ──────────────────────────────────────────────────────
+    # silhouette : YOLOE mask -> cube-silhouette fit + CNN top/front (recommended)
+    # yoloe_faces: YOLOE mask -> original face/pip segmentation + top-face-polygon pose
+    # classical  : RANSAC depth plane + HSV face/pip segmentation
+    pose_method: silhouette
+    device: auto                  # YOLOE + CNN: auto | cuda | cpu
+    cnn_model_path: weights/die_mobilenet_v3.pt
+    cnn_conf_thresh: 0.55
+    min_fit_iou: 0.85             # reject poses whose silhouette IoU is lower (occlusion, wrong object)
+    accept_fit_iou: 0.90          # stop trying YOLOE candidates once one fits this well
+    min_face_pose_iou: 0.60       # yoloe_faces: same check on the face-polygon pose (not IoU-optimised)
+    max_yoloe_candidates: 3
+    yoloe_candidate_conf: 0.02
+    color_fallback: true          # HSV candidate when no YOLOE candidate fits
+    # Table plane for the silhouette method: tf | fixed | depth
+    plane_source: tf
+    table_frame: base_footprint
+    table_height_m: 0.55          # tiago_utils_config.yaml: table_pos_z + leg_height + table_thickness
+    # plane_source: fixed -> plane in the camera optical frame (n up, n·X + h = 0)
+    plane_normal_cam: [0.0, -0.6, -0.8]
+    plane_height_m: 0.62
+
     canny_high_thresh: 130
     canny_low_thresh: 40
     # camera_info_topic: /camera/color/camera_info
@@ -11,7 +33,7 @@ die_detector_node:
     depth_scale: 0.001
     # depth_topic: /camera/aligned_depth_to_color/image_raw
     depth_topic: /head_front_camera/aligned_depth_to_color/image_raw
-    detection_mode: km
+    detection_mode: hsv   # classical path only (was 'km', which matched no mode and ran HSV)
     die_color: white
     die_size_m: 0.041
     fx: 615.0

@@ -21,7 +21,7 @@ except ImportError:
     HAS_YAML = False
 
 # Absolute path to the package root directory (drims_die_detection)
-PACKAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
 @dataclass
@@ -109,7 +109,11 @@ class DieDetectorParams:
     die_color: str = "white"
     num_color_clusters: int = 5
     die_size_m: float = 0.050           # 5 cm standard die
-    detection_mode: str = "hsv"         # "hsv", "kmeans"
+    detection_mode: str = "yoloe"      # "yoloe", "hsv", "kmeans"
+    yoloe_model: str = "yoloe-11s-seg.pt"
+    yoloe_conf: float = 0.05
+    yoloe_classes: list[str] = field(default_factory=lambda: ["white die", "white dice", "die", "dice"])
+    yoloe_imgsz: int = 1024
     hsv_min: list[int] = field(default_factory=lambda: [0, 0, 150])
     hsv_max: list[int] = field(default_factory=lambda: [180, 80, 255])
     glare_v_thresh: int = 245
@@ -119,6 +123,34 @@ class DieDetectorParams:
     canny_high_thresh: int = 130
     min_pips: int = 1
     max_pips: int = 6
+
+    # ── CNN Die Orientation Classifier ───────────────────────────────────
+    use_cnn_orientation: bool = True
+    cnn_model_path: str = "weights/die_mobilenet_v3.pt"
+    cnn_conf_thresh: float = 0.60
+
+    # ── Pose method ────────────────────────────────────────────────────────
+    # "classical" : DieDetectorPipeline (RANSAC depth plane + face/pip polygons)
+    # "silhouette": SilhouettePipeline (YOLOE mask -> cube silhouette fit + CNN)
+    # "yoloe_faces": FacePolygonPipeline (YOLOE mask -> face/pip polygons + top-face pose)
+    pose_method: str = "classical"
+    device: str = "auto"                # YOLOE + CNN device: "auto", "cuda", "cpu"
+    min_fit_iou: float = 0.85           # reject silhouette fits below this IoU
+    accept_fit_iou: float = 0.90        # stop trying further candidates once a fit reaches this
+    min_face_pose_iou: float = 0.60     # same check for face-polygon poses (not IoU-optimised, so lower)
+    max_yoloe_candidates: int = 3       # YOLOE candidates tried per frame (best fit wins)
+    yoloe_candidate_conf: float = 0.02  # low on purpose: the fit check rejects wrong candidates
+    color_fallback: bool = True         # HSV/k-means candidate when no YOLOE fit passes min_fit_iou
+
+    # ── Table plane (silhouette method) ───────────────────────────────────
+    # "tf"   : table_frame -> camera TF + table top height table_height_m (z in table_frame)
+    # "fixed": plane_normal_cam / plane_height_m given in the camera optical frame
+    # "depth": RANSAC plane fit on the aligned depth image
+    plane_source: str = "tf"
+    table_frame: str = "base_footprint"
+    table_height_m: float = 0.55        # tiago_utils_config.yaml: table_pos_z + leg_height + table_thickness
+    plane_normal_cam: list[float] = field(default_factory=lambda: [0.0, -0.6, -0.8])
+    plane_height_m: float = 0.62        # camera height above the table plane
 
     # ── Clustering / height filter ─────────────────────────────────────────
     min_die_height_m: float = 0.003     # 3 mm above table

@@ -1,5 +1,6 @@
 # Python
 .venv/
+.venv-docker/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -18,6 +19,13 @@ test_bags/
 # Raw depth numpy files in output
 output/*.npy
 
+# Model weights: never tracked -- fetch them with ./download_weights.sh
+weights/*
+!weights/.gitkeep
+
+# Weights & Biases run logs (any directory training was started from)
+wandb/
+
 # ROS 2 colcon build artifacts
 build/
 install/
@@ -32,3 +40,6 @@ htmlcov/
 .idea/
 .vscode/
 *.swp
+
+# Datasets
+dataset*/

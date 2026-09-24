@@ -13,12 +13,13 @@ Step 5 — Return visible faces (with pip counts) and debug step images.
 from __future__ import annotations
 
 import math
+import os
 from itertools import combinations
 
 import cv2
 import numpy as np
 
-from .die_detector_params import DieDetectorParams
+from .die_detector_params import PACKAGE_ROOT, DieDetectorParams
 
 
 def safe_find_contours(img, mode, method):
@@ -57,6 +58,32 @@ class RGBDieDetector:
     def __init__(self, params: DieDetectorParams | None = None) -> None:
         self.params = params or DieDetectorParams()
         self._log = self._make_logger()
+        self._yoloe_model = None
+
+    def _get_yoloe_model(self):
+        """Lazy loader for Ultralytics YOLOE model."""
+        if self._yoloe_model is None:
+            try:
+                from ultralytics import YOLOE
+                model_name = getattr(self.params, "yoloe_model", "yoloe-11s-seg.pt")
+                classes = getattr(self.params, "yoloe_classes", ["white die", "white dice", "die", "dice"])
+                # Ultralytics resolves/downloads bare checkpoint names (and the
+                # mobileclip text encoder pulled in by set_classes) relative to
+                # the CWD, so load from <pkg>/weights/ to keep them in the package.
+                weights_dir = os.path.join(PACKAGE_ROOT, "weights")
+                os.makedirs(weights_dir, exist_ok=True)
+                prev_cwd = os.getcwd()
+                os.chdir(weights_dir)
+                try:
+                    self._yoloe_model = YOLOE(model_name)
+                    self._yoloe_model.set_classes(classes)
+                finally:
+                    os.chdir(prev_cwd)
+                self._log(f"Loaded YOLOE model '{model_name}' with classes: {classes}")
+            except Exception as e:
+                self._log(f"Failed to load YOLOE model: {e}")
+                self._yoloe_model = False
+        return self._yoloe_model if self._yoloe_model is not False else None
 
     # ──────────────────────────────────────────────────────────────────────
     def detect(
@@ -114,37 +141,13 @@ class RGBDieDetector:
 
         # ── Step 1: Color Segmentation & Specular Glare Handling ─────────────
         glare_v_cutoff = getattr(self.params, "glare_v_thresh", 245)
-
-        if mode == "kmeans":
-            lab = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2LAB)
-            pixels = lab.reshape((-1, 3)).astype(np.float32)
-            K = num_color_clusters
-            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
-            _, labels, centers = cv2.kmeans(pixels, K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
-
-            centers_bgr = cv2.cvtColor(
-                np.uint8(centers).reshape(1, K, 3), cv2.COLOR_LAB2BGR
-            ).reshape(K, 3)
-            clustered_flat = centers_bgr[labels.flatten()]
-            step1_img = clustered_flat.reshape((h, w, 3))
-
-            target_idx = self._target_cluster(centers, K, die_color)
-            labels_2d = labels.reshape((h, w))
-            whitest_mask = (labels_2d == target_idx).astype(np.uint8) * 255
-            self._log("Step 1: K-Means clustering done.")
-
-        else: # Default: HSV mode
-            hsv = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2HSV)
-            h_min = np.array(getattr(self.params, "hsv_min", [0, 0, 150]), dtype=np.uint8)
-            h_max = np.array(getattr(self.params, "hsv_max", [180, 80, 255]), dtype=np.uint8)
-            color_mask = cv2.inRange(hsv, h_min, h_max)
-
-            # Detect specular glare highlights (high V, low saturation) to include in die body
-            glare_mask = cv2.inRange(hsv, np.array([0, 0, glare_v_cutoff], dtype=np.uint8),
-                                     np.array([180, 50, 255], dtype=np.uint8))
-            whitest_mask = cv2.bitwise_or(color_mask, glare_mask)
-            step1_img = cv2.bitwise_and(rgb_bgr, rgb_bgr, mask=whitest_mask)
-            self._log(f"Step 1: HSV thresholding ({h_min.tolist()} - {h_max.tolist()}) with glare inclusion done.")
+        best_hull = best_cnt = best_bbox = None
+        best_score = -1.0
+        step1_img = None
+        whitest_mask = None
+        whitest_clean = None
+        step2_img = rgb_bgr.copy()
+        step2_contours_img = rgb_bgr.copy()
 
         # Compute Canny Edge Detection Mask for full image (Step 2 Panel & Candidate Scoring)
         gray_full = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2GRAY)
@@ -154,148 +157,231 @@ class RGBDieDetector:
         edges_full = cv2.Canny(gray_blur, c_low, c_high)
         edges_dilated = cv2.dilate(edges_full, np.ones((3, 3), np.uint8))
 
-        # ── Step 2: Target cluster / mask → Candidate contour scoring ────────
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        whitest_clean = cv2.morphologyEx(whitest_mask, cv2.MORPH_CLOSE, kernel)
-        whitest_clean = cv2.morphologyEx(whitest_clean, cv2.MORPH_OPEN, kernel)
+        if mode == "yoloe":
+            model = self._get_yoloe_model()
+            if model is not None:
+                conf = getattr(self.params, "yoloe_conf", 0.05)
+                imgsz = getattr(self.params, "yoloe_imgsz", 1024)
+                preds = model.predict(rgb_bgr, conf=conf, imgsz=imgsz, verbose=False)
+                if preds and len(preds) > 0 and preds[0].boxes is not None and len(preds[0].boxes) > 0 and preds[0].masks is not None:
+                    res = preds[0]
+                    valid_candidates = []
+                    for i in range(len(res.boxes)):
+                        bx1, by1, bx2, by2 = res.boxes.xyxy[i].cpu().numpy().astype(int)
+                        area = int((bx2 - bx1) * (by2 - by1))
+                        if area > 1000:
+                            valid_candidates.append((float(res.boxes.conf[i].item()), i, (bx1, by1, bx2, by2)))
+                    if valid_candidates:
+                        valid_candidates.sort(key=lambda x: x[0], reverse=True)
+                        best_score, best_i, (bx1, by1, bx2, by2) = valid_candidates[0]
+                        best_bbox = (int(bx1), int(by1), int(max(1, bx2 - bx1)), int(max(1, by2 - by1)))
+                        m = res.masks.data[best_i].cpu().numpy()
+                        m_resized = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)
+                        whitest_mask = (m_resized > 0.5).astype(np.uint8) * 255
+                        whitest_clean = whitest_mask
+                        step1_img = cv2.bitwise_and(rgb_bgr, rgb_bgr, mask=whitest_mask)
+                        cnts, _ = safe_find_contours(whitest_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        if cnts:
+                            best_cnt = max(cnts, key=cv2.contourArea)
+                            best_hull = cv2.convexHull(best_cnt)
 
-        contours, _ = safe_find_contours(whitest_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        for iconf, i, (ibx1, iby1, ibx2, iby2) in valid_candidates:
+                            is_b = (i == best_i)
+                            clr = (0, 255, 0) if is_b else (255, 165, 0)
+                            cv2.rectangle(step2_contours_img, (ibx1, iby1), (ibx2, iby2), clr, 2)
+                            cv2.putText(step2_contours_img, f"YOLOE die {iconf:.2f}",
+                                        (ibx1, max(15, iby1 - 5)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, clr, 2)
+                            if res.masks is not None and i < len(res.masks.data):
+                                mi = res.masks.data[i].cpu().numpy()
+                                mi_res = cv2.resize(mi, (w, h), interpolation=cv2.INTER_LINEAR)
+                                m_poly = (mi_res > 0.5).astype(np.uint8) * 255
+                                m_cnts, _ = safe_find_contours(m_poly, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                                if m_cnts:
+                                    cv2.drawContours(step2_contours_img, m_cnts, -1, clr, 2)
 
-        step2_img = rgb_bgr.copy()
-        step2_contours_img = rgb_bgr.copy()
-        best_hull = best_cnt = best_bbox = None
-        best_score = -1.0
+                        if best_hull is not None:
+                            cv2.drawContours(step2_img, [best_hull], -1, (0, 255, 0), 3)
+                            if best_cnt is not None:
+                                cv2.drawContours(step2_img, [best_cnt], -1, (0, 0, 255), 1)
+                        self._log(f"Step 1 & 2: YOLOE detection succeeded: conf={best_score:.3f}, bbox={best_bbox}")
+                    else:
+                        self._log("Step 1 & 2: YOLOE candidates were too small (<1000px), falling back to classical pipeline.")
+                else:
+                    self._log("Step 1 & 2: YOLOE found no candidates, falling back to classical pipeline.")
 
-        clip_limit = getattr(self.params, "clahe_clip_limit", 3.0)
-        min_circ = getattr(self.params, "pip_min_circularity", 0.45)
-        glare_cutoff = getattr(self.params, "glare_v_thresh", 245)
+        if best_bbox is None:
+            # ── Step 1: Classical Color Segmentation & Specular Glare Handling ─────────────
+            glare_v_cutoff = getattr(self.params, "glare_v_thresh", 245)
 
-        evaluated_candidates = []
+            if mode == "kmeans":
+                lab = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2LAB)
+                pixels = lab.reshape((-1, 3)).astype(np.float32)
+                K = num_color_clusters
+                criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+                _, labels, centers = cv2.kmeans(pixels, K, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if 800 < area < 60_000:
-                x, y, bw, bh = cv2.boundingRect(cnt)
-                aspect = float(bw) / float(bh) if bh > 0 else 0
-                if 0.4 <= aspect <= 2.2:
-                    hull = cv2.convexHull(cnt)
-                    arc_len = cv2.arcLength(hull, True)
+                centers_bgr = cv2.cvtColor(
+                    np.uint8(centers).reshape(1, K, 3), cv2.COLOR_LAB2BGR
+                ).reshape(K, 3)
+                clustered_flat = centers_bgr[labels.flatten()]
+                step1_img = clustered_flat.reshape((h, w, 3))
 
-                    # 1. Test Quadrangular Geometry Fit (convex 4-sided polygon)
-                    is_quad = False
-                    if arc_len > 0:
-                        approx = cv2.approxPolyDP(hull, 0.03 * arc_len, True)
-                        if len(approx) == 4 and cv2.isContourConvex(approx):
-                            is_quad = True
+                target_idx = self._target_cluster(centers, K, die_color)
+                labels_2d = labels.reshape((h, w))
+                whitest_mask = (labels_2d == target_idx).astype(np.uint8) * 255
+                self._log("Step 1: K-Means clustering done.")
 
-                    # 2. Edge Boundary Overlap Check (verifies sharp edges along die face border)
-                    cnt_boundary = np.zeros((h, w), dtype=np.uint8)
-                    cv2.drawContours(cnt_boundary, [cnt], -1, 255, thickness=2)
-                    n_cnt_px = np.count_nonzero(cnt_boundary)
-                    overlap = cv2.bitwise_and(cnt_boundary, edges_dilated)
-                    n_overlap_px = np.count_nonzero(overlap)
-                    edge_support = float(n_overlap_px) / float(max(1, n_cnt_px))
-                    edge_boost = 0.4 if edge_support < 0.10 else (1.0 + 3.0 * edge_support)
+            else:  # Default: HSV mode
+                hsv = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2HSV)
+                h_min = np.array(getattr(self.params, "hsv_min", [0, 0, 150]), dtype=np.uint8)
+                h_max = np.array(getattr(self.params, "hsv_max", [180, 80, 255]), dtype=np.uint8)
+                color_mask = cv2.inRange(hsv, h_min, h_max)
 
-                    # 3. Count interior dark circular spots (pips) strictly inside inner contour margin
-                    crop_bgr = rgb_bgr[y:y+bh, x:x+bw]
-                    crop_gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+                # Detect specular glare highlights (high V, low saturation) to include in die body
+                glare_mask = cv2.inRange(hsv, np.array([0, 0, glare_v_cutoff], dtype=np.uint8),
+                                         np.array([180, 50, 255], dtype=np.uint8))
+                whitest_mask = cv2.bitwise_or(color_mask, glare_mask)
+                step1_img = cv2.bitwise_and(rgb_bgr, rgb_bgr, mask=whitest_mask)
+                self._log(f"Step 1: HSV thresholding ({h_min.tolist()} - {h_max.tolist()}) with glare inclusion done.")
 
-                    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
-                    enhanced = clahe.apply(crop_gray)
-                    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+            # ── Step 2: Target cluster / mask → Candidate contour scoring ────────
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+            whitest_clean = cv2.morphologyEx(whitest_mask, cv2.MORPH_CLOSE, kernel)
+            whitest_clean = cv2.morphologyEx(whitest_clean, cv2.MORPH_OPEN, kernel)
 
-                    dark = cv2.adaptiveThreshold(
-                        blurred, 255,
-                        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
-                        15, 4
-                    )
-                    _, bw_cand = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                    dark = cv2.bitwise_or(dark, cv2.bitwise_not(bw_cand))
+            contours, _ = safe_find_contours(whitest_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                    # Exclude glare highlights from pip candidate count
-                    hsv_crop = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
-                    glare = cv2.inRange(hsv_crop, np.array([0, 0, glare_cutoff], dtype=np.uint8),
-                                       np.array([180, 50, 255], dtype=np.uint8))
-                    dark = cv2.bitwise_and(dark, cv2.bitwise_not(cv2.dilate(glare, np.ones((5,5), np.uint8))))
+            clip_limit = getattr(self.params, "clahe_clip_limit", 3.0)
+            min_circ = getattr(self.params, "pip_min_circularity", 0.45)
+            glare_cutoff = getattr(self.params, "glare_v_thresh", 245)
 
-                    p_cnts, _ = safe_find_contours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    inner_pips_radii = []
-                    margin_x = int(bw * 0.08)
-                    margin_y = int(bh * 0.08)
-                    max_p_area = bw * bh * 0.12
+            evaluated_candidates = []
 
-                    for pc in p_cnts:
-                        pa = cv2.contourArea(pc)
-                        if 6 < pa < max_p_area:
-                            (px, py), pr = cv2.minEnclosingCircle(pc)
-                            # Inner boundary margin check
-                            if margin_x <= px <= (bw - margin_x) and margin_y <= py <= (bh - margin_y):
-                                # Must be inside candidate contour
-                                if cv2.pointPolygonTest(cnt, (float(x + px), float(y + py)), False) >= 0:
-                                    perim = cv2.arcLength(pc, True)
-                                    if perim > 0:
-                                        circ = (4 * math.pi * pa) / (perim ** 2)
-                                        if circ >= min_circ:
-                                            inner_pips_radii.append(pr)
+            for cnt in contours:
+                area = cv2.contourArea(cnt)
+                if 800 < area < 60_000:
+                    x, y, bw, bh = cv2.boundingRect(cnt)
+                    aspect = float(bw) / float(bh) if bh > 0 else 0
+                    if 0.4 <= aspect <= 2.2:
+                        hull = cv2.convexHull(cnt)
+                        arc_len = cv2.arcLength(hull, True)
 
-                    n_inner = len(inner_pips_radii)
+                        # 1. Test Quadrangular Geometry Fit (convex 4-sided polygon)
+                        is_quad = False
+                        if arc_len > 0:
+                            approx = cv2.approxPolyDP(hull, 0.03 * arc_len, True)
+                            if len(approx) == 4 and cv2.isContourConvex(approx):
+                                is_quad = True
 
-                    # Pip radius uniformity check (real die pips have consistent radii)
-                    uniformity_penalty = 1.0
-                    if n_inner >= 2:
-                        std_r = float(np.std(inner_pips_radii))
-                        mean_r = float(np.mean(inner_pips_radii))
-                        if mean_r > 0 and (std_r / mean_r) > 0.35:
-                            uniformity_penalty = 0.2
+                        # 2. Edge Boundary Overlap Check (verifies sharp edges along die face border)
+                        cnt_boundary = np.zeros((h, w), dtype=np.uint8)
+                        cv2.drawContours(cnt_boundary, [cnt], -1, 255, thickness=2)
+                        n_cnt_px = np.count_nonzero(cnt_boundary)
+                        overlap = cv2.bitwise_and(cnt_boundary, edges_dilated)
+                        n_overlap_px = np.count_nonzero(overlap)
+                        edge_support = float(n_overlap_px) / float(max(1, n_cnt_px))
+                        edge_boost = 0.4 if edge_support < 0.10 else (1.0 + 3.0 * edge_support)
 
-                    # Area decay penalty for unrealistically large sheets / table regions (> 12,000 px)
-                    area_penalty = (12000.0 / float(area)) ** 2.0 if area > 12000 else 1.0
+                        # 3. Count interior dark circular spots (pips) strictly inside inner contour margin
+                        crop_bgr = rgb_bgr[y:y+bh, x:x+bw]
+                        crop_gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
 
-                    # 4. Calculate Composite Score
-                    pip_boost = 1.0 + 1000.0 * min(n_inner, 6) * uniformity_penalty
-                    quad_boost = 5.0 if is_quad else 1.0
-                    score = area_penalty * float(area) * pip_boost * quad_boost * edge_boost
+                        clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
+                        enhanced = clahe.apply(crop_gray)
+                        blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
 
-                    evaluated_candidates.append({
-                        "contour": cnt,
-                        "hull": hull,
-                        "bbox": (x, y, bw, bh),
-                        "score": score,
-                        "area": area,
-                        "n_pips": n_inner,
-                        "is_quad": is_quad,
-                        "edge_support": edge_support,
-                    })
+                        dark = cv2.adaptiveThreshold(
+                            blurred, 255,
+                            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
+                            15, 4
+                        )
+                        _, bw_cand = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        dark = cv2.bitwise_or(dark, cv2.bitwise_not(bw_cand))
 
-                    if score > best_score:
-                        best_score = score
-                        best_hull = hull
-                        best_cnt = cnt
-                        best_bbox = (x, y, bw, bh)
+                        # Exclude glare highlights from pip candidate count
+                        hsv_crop = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
+                        glare = cv2.inRange(hsv_crop, np.array([0, 0, glare_cutoff], dtype=np.uint8),
+                                           np.array([180, 50, 255], dtype=np.uint8))
+                        dark = cv2.bitwise_and(dark, cv2.bitwise_not(cv2.dilate(glare, np.ones((5,5), np.uint8))))
 
-        # Draw all evaluated candidate contours for Panel 2 visualization
-        for cand in evaluated_candidates:
-            cnt = cand["contour"]
-            hull = cand["hull"]
-            x, y, bw, bh = cand["bbox"]
-            is_best = (cand["bbox"] == best_bbox)
+                        p_cnts, _ = safe_find_contours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        inner_pips_radii = []
+                        margin_x = int(bw * 0.08)
+                        margin_y = int(bh * 0.08)
+                        max_p_area = bw * bh * 0.12
 
-            color = (0, 255, 0) if is_best else (255, 165, 0)  # Green for best die, orange for others
-            cv2.drawContours(step2_contours_img, [hull], -1, color, 3 if is_best else 2)
-            cv2.rectangle(step2_contours_img, (x, y), (x + bw, y + bh), (0, 255, 255), 1)
+                        for pc in p_cnts:
+                            pa = cv2.contourArea(pc)
+                            if 6 < pa < max_p_area:
+                                (px, py), pr = cv2.minEnclosingCircle(pc)
+                                # Inner boundary margin check
+                                if margin_x <= px <= (bw - margin_x) and margin_y <= py <= (bh - margin_y):
+                                    # Must be inside candidate contour
+                                    if cv2.pointPolygonTest(cnt, (float(x + px), float(y + py)), False) >= 0:
+                                        perim = cv2.arcLength(pc, True)
+                                        if perim > 0:
+                                            circ = (4 * math.pi * pa) / (perim ** 2)
+                                            if circ >= min_circ:
+                                                inner_pips_radii.append(pr)
 
-            quad_str = "QUAD" if cand["is_quad"] else "NON-QUAD"
-            lbl = f"Pips:{cand['n_pips']} | {quad_str} | Score:{int(cand['score'])}"
-            cv2.putText(step2_contours_img, lbl, (x, max(15, y - 5)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
+                        n_inner = len(inner_pips_radii)
 
-        if best_hull is not None:
-            cv2.drawContours(step2_img, [best_hull], -1, (0, 255, 0), 3)
-            if best_cnt is not None:
-                cv2.drawContours(step2_img, [best_cnt], -1, (0, 0, 255), 1)
+                        # Pip radius uniformity check (real die pips have consistent radii)
+                        uniformity_penalty = 1.0
+                        if n_inner >= 2:
+                            std_r = float(np.std(inner_pips_radii))
+                            mean_r = float(np.mean(inner_pips_radii))
+                            if mean_r > 0 and (std_r / mean_r) > 0.35:
+                                uniformity_penalty = 0.2
 
-        self._log(f"Step 2: Best die candidate score={best_score:.1f}, bbox={best_bbox}.")
+                        # Area decay penalty for unrealistically large sheets / table regions (> 12,000 px)
+                        area_penalty = (12000.0 / float(area)) ** 2.0 if area > 12000 else 1.0
+
+                        # 4. Calculate Composite Score
+                        pip_boost = 1.0 + 1000.0 * min(n_inner, 6) * uniformity_penalty
+                        quad_boost = 5.0 if is_quad else 1.0
+                        score = area_penalty * float(area) * pip_boost * quad_boost * edge_boost
+
+                        evaluated_candidates.append({
+                            "contour": cnt,
+                            "hull": hull,
+                            "bbox": (x, y, bw, bh),
+                            "score": score,
+                            "area": area,
+                            "n_pips": n_inner,
+                            "is_quad": is_quad,
+                            "edge_support": edge_support,
+                        })
+
+                        if score > best_score:
+                            best_score = score
+                            best_hull = hull
+                            best_cnt = cnt
+                            best_bbox = (x, y, bw, bh)
+
+            # Draw all evaluated candidate contours for Panel 2 visualization
+            for cand in evaluated_candidates:
+                cnt = cand["contour"]
+                hull = cand["hull"]
+                x, y, bw, bh = cand["bbox"]
+                is_best = (cand["bbox"] == best_bbox)
+
+                color = (0, 255, 0) if is_best else (255, 165, 0)  # Green for best die, orange for others
+                cv2.drawContours(step2_contours_img, [hull], -1, color, 3 if is_best else 2)
+                cv2.rectangle(step2_contours_img, (x, y), (x + bw, y + bh), (0, 255, 255), 1)
+
+                quad_str = "QUAD" if cand["is_quad"] else "NON-QUAD"
+                lbl = f"Pips:{cand['n_pips']} | {quad_str} | Score:{int(cand['score'])}"
+                cv2.putText(step2_contours_img, lbl, (x, max(15, y - 5)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
+
+            if best_hull is not None:
+                cv2.drawContours(step2_img, [best_hull], -1, (0, 255, 0), 3)
+                if best_cnt is not None:
+                    cv2.drawContours(step2_img, [best_cnt], -1, (0, 0, 255), 1)
+
+            self._log(f"Step 2: Best die candidate score={best_score:.1f}, bbox={best_bbox}.")
 
         # ── Step 3: Crop ──────────────────────────────────────────────────
         if best_bbox is not None:
@@ -344,6 +430,8 @@ class RGBDieDetector:
         pip_holes = cv2.bitwise_and(cv2.bitwise_not(bw_mask), hull_mask)
         dark_mask = cv2.bitwise_or(dark_mask, pip_holes)
         dark_mask = cv2.bitwise_and(dark_mask, hull_mask)
+        hull_inner = cv2.erode(hull_mask, np.ones((5, 5), np.uint8))
+        dark_mask = cv2.bitwise_and(dark_mask, hull_inner)
 
         # Glare mask: exclude blown-out specular highlights from pip candidates
         hsv_crop = cv2.cvtColor(step3_crop, cv2.COLOR_BGR2HSV)
@@ -356,7 +444,32 @@ class RGBDieDetector:
         pip_cnts, _ = safe_find_contours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         max_pip_area = crop_w * crop_h * 0.025
         max_pip_radius = min(crop_w, crop_h) * 0.09
+        max_pip_radius = min(crop_w, crop_h) * 0.12
         valid_pips = []
+
+        # 1. Detect pips as internal holes of the white face(s) in bw_mask
+        cnts_cc_pips, hier_cc_pips = safe_find_contours(bw_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        if hier_cc_pips is not None:
+            for i in range(len(cnts_cc_pips)):
+                if hier_cc_pips[0][i][3] >= 0:  # Internal hole inside white region
+                    pc = cnts_cc_pips[i]
+                    pa = cv2.contourArea(pc)
+                    if 6 < pa < max_pip_area:
+                        perim = cv2.arcLength(pc, True)
+                        if perim > 0:
+                            circularity = (4 * math.pi * pa) / (perim ** 2)
+                            if circularity >= min_circ:
+                                (px, py), pr = cv2.minEnclosingCircle(pc)
+                                if pr <= max_pip_radius:
+                                    valid_pips.append({
+                                        "center": (int(px), int(py)),
+                                        "radius": max(2, int(pr)),
+                                        "contour": pc,
+                                        "area": pa,
+                                    })
+
+        # 2. Detect pips from adaptiveThreshold dark mask
+        pip_cnts, _ = safe_find_contours(dark_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for pc in pip_cnts:
             pa = cv2.contourArea(pc)
             if 6 < pa < max_pip_area:
@@ -367,15 +480,17 @@ class RGBDieDetector:
                 if circularity >= min_circ:
                     (px, py), pr = cv2.minEnclosingCircle(pc)
                     if pr <= max_pip_radius:
-                        bx_p, by_p, bw_p, bh_p = cv2.boundingRect(pc)
-                        asp = float(bw_p) / float(bh_p) if bh_p > 0 else 0
-                        if 0.3 <= asp <= 3.2:
-                            valid_pips.append({
-                                "center": (int(px), int(py)),
-                                "radius": max(2, int(pr)),
-                                "contour": pc,
-                                "area": pa,
-                            })
+                        # Only pips not already found as holes in pass 1
+                        if not any(math.hypot(px - vp["center"][0], py - vp["center"][1]) < max(pr, vp["radius"]) for vp in valid_pips):
+                            bx_p, by_p, bw_p, bh_p = cv2.boundingRect(pc)
+                            asp = float(bw_p) / float(bh_p) if bh_p > 0 else 0
+                            if 0.3 <= asp <= 3.2:
+                                valid_pips.append({
+                                    "center": (int(px), int(py)),
+                                    "radius": max(2, int(pr)),
+                                    "contour": pc,
+                                    "area": pa,
+                                })
 
         # Fill pip holes to preserve solid face regions
         bw_filled = bw_mask.copy()

@@ -2,12 +2,22 @@
 """
 ROS 2 Die Detector Node
 =======================
-Subscribes to synchronised RGB + aligned depth topics and a CameraInfo topic,
-runs the DieDetectorPipeline, and publishes:
+Two pose methods (parameter ``pose_method``):
+
+  * ``silhouette`` — SilhouettePipeline: YOLOE die mask -> cube-silhouette fit
+    on the table plane + CNN top/front face. The table plane comes from
+    ``plane_source``: ``tf`` (table_frame -> camera TF + ``table_height_m``),
+    ``fixed`` (``plane_normal_cam`` / ``plane_height_m``) or ``depth`` (RANSAC).
+    With ``tf`` / ``fixed`` only the RGB topic is needed.
+  * ``yoloe_faces`` — FacePolygonPipeline: YOLOE die mask -> the original
+    face / pip segmentation + top-face-polygon pose, on the same plane sources.
+  * ``classical``  — DieDetectorPipeline: RANSAC depth plane + face/pip
+    segmentation (needs synchronised RGB + aligned depth).
+
+Publishes:
 
   * /dice/pose          — geometry_msgs/PoseStamped
   * /dice/debug_panels  — sensor_msgs/Image  (6-panel collage)
-  * /dice/top_down      — sensor_msgs/Image  (pip-annotated top-down crop)
   * TF2 transforms      — die_top_face & die_centroid frames
 
 Parameters are loaded from the ROS 2 parameter server (set via the YAML config
@@ -31,6 +41,10 @@ try:
     from visualization_msgs.msg import Marker
     from rcl_interfaces.msg import SetParametersResult
     from tf2_ros import TransformBroadcaster
+    from tf2_ros.buffer import Buffer
+    from tf2_ros.transform_listener import TransformListener
+    from rclpy.duration import Duration
+    from rclpy.time import Time
     from cv_bridge import CvBridge
     import message_filters
     from drims_homework_interfaces.srv import DieIdentification3D
@@ -46,6 +60,8 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from drims_die_detection import DieDetectorParams, DieDetectorPipeline
+from drims_die_detection.point_cloud_processor import PointCloudProcessor
+from scipy.spatial.transform import Rotation as R_sci
 
 
 def _load_yaml_defaults(node_name: str) -> dict:
@@ -104,6 +120,8 @@ class DieDetectorNode(Node):
             save=_declare_and_get(self, "save", _g("save", False)),
             fx=_declare_and_get(self, "fx", _g("fx", 615.0)),
             fy=_declare_and_get(self, "fy", _g("fy", 615.0)),
+            cx=_declare_and_get(self, "cx", float(_g("cx", -1.0) or -1.0)),
+            cy=_declare_and_get(self, "cy", float(_g("cy", -1.0) or -1.0)),
             depth_model=_declare_and_get(self, "depth_model", _g("depth_model", "Intel/dpt-hybrid-midas")),
             depth_scale=_declare_and_get(self, "depth_scale", _g("depth_scale", 0.001)),
             use_monocular_fallback=_declare_and_get(self, "use_monocular_fallback", _g("use_monocular_fallback", True)),
@@ -134,7 +152,26 @@ class DieDetectorNode(Node):
             debug_panels_topic=_declare_and_get(self, "debug_panels_topic", _g("debug_panels_topic", "/dice/debug_panels")),
             top_down_topic=_declare_and_get(self, "top_down_topic", _g("top_down_topic", "/dice/top_down")),
             service_name=_declare_and_get(self, "service_name", _g("service_name", "die_identification")),
+            # ── silhouette pose method ──
+            pose_method=_declare_and_get(self, "pose_method", _g("pose_method", "silhouette")),
+            device=_declare_and_get(self, "device", _g("device", "auto")),
+            cnn_model_path=_declare_and_get(self, "cnn_model_path", _g("cnn_model_path", "weights/die_mobilenet_v3.pt")),
+            cnn_conf_thresh=_declare_and_get(self, "cnn_conf_thresh", _g("cnn_conf_thresh", 0.60)),
+            min_fit_iou=_declare_and_get(self, "min_fit_iou", _g("min_fit_iou", 0.85)),
+            accept_fit_iou=_declare_and_get(self, "accept_fit_iou", _g("accept_fit_iou", 0.90)),
+            min_face_pose_iou=_declare_and_get(self, "min_face_pose_iou", _g("min_face_pose_iou", 0.60)),
+            max_yoloe_candidates=_declare_and_get(self, "max_yoloe_candidates", _g("max_yoloe_candidates", 3)),
+            yoloe_candidate_conf=_declare_and_get(self, "yoloe_candidate_conf", _g("yoloe_candidate_conf", 0.02)),
+            color_fallback=_declare_and_get(self, "color_fallback", _g("color_fallback", True)),
+            plane_source=_declare_and_get(self, "plane_source", _g("plane_source", "tf")),
+            table_frame=_declare_and_get(self, "table_frame", _g("table_frame", "base_footprint")),
+            table_height_m=_declare_and_get(self, "table_height_m", _g("table_height_m", 0.55)),
+            plane_normal_cam=_declare_and_get(self, "plane_normal_cam", _g("plane_normal_cam", [0.0, -0.6, -0.8])),
+            plane_height_m=_declare_and_get(self, "plane_height_m", _g("plane_height_m", 0.62)),
         )
+        # cx / cy < 0 (ROS parameters cannot be None) = image centre
+        p.cx = p.cx if p.cx is not None and p.cx >= 0 else None
+        p.cy = p.cy if p.cy is not None and p.cy >= 0 else None
         self._params = p
         p.log(self.get_logger())
 
@@ -142,12 +179,35 @@ class DieDetectorNode(Node):
         self.add_on_set_parameters_callback(self._on_param_change)
 
         # ── Pipeline ───────────────────────────────────────────────────
-        self._pipeline = DieDetectorPipeline(p)
+        # silhouette / yoloe_faces take the table plane from plane_source (tf | fixed | depth)
+        self._plane_based = p.pose_method in ("silhouette", "yoloe_faces")
+        if p.pose_method == "silhouette":
+            from drims_die_detection import SilhouettePipeline
+            self._pipeline = SilhouettePipeline(p)
+            self.get_logger().info(f"Pose method: silhouette — YOLOE + cube fit + CNN "
+                                   f"(device={self._pipeline.device}, plane_source={p.plane_source})")
+        elif p.pose_method == "yoloe_faces":
+            from drims_die_detection import FacePolygonPipeline
+            self._pipeline = FacePolygonPipeline(p, "yoloe")
+            self.get_logger().info(f"Pose method: yoloe_faces — YOLOE + face/pip polygons + top-face pose "
+                                   f"(device={self._pipeline.device}, plane_source={p.plane_source})")
+        elif p.pose_method != "classical":
+            raise ValueError(f"Unknown pose_method '{p.pose_method}' (silhouette | yoloe_faces | classical)")
+        else:
+            self._pipeline = DieDetectorPipeline(p)
+            self.get_logger().info("Pose method: classical (RANSAC depth plane + face/pip polygons)")
+        self._pc_proc = PointCloudProcessor(p) if (self._plane_based and p.plane_source == "depth") else None
         self._last_result: dict | None = None
+        self._warned_no_info = False
+        self._stats = {"received": 0, "processed": 0, "poses": 0}
+        self.create_timer(10.0, self._log_stats)
 
         # ── ROS infrastructure ─────────────────────────────────────────
         self._bridge = CvBridge()
         self._tf_broadcaster = TransformBroadcaster(self)
+        if self._plane_based and p.plane_source == "tf":
+            self._tf_buffer = Buffer()
+            self._tf_listener = TransformListener(self._tf_buffer, self)
 
         # Intrinsics: updated from CameraInfo (start with param defaults)
         self._fx = p.fx
@@ -182,16 +242,24 @@ class DieDetectorNode(Node):
             CameraInfo, p.camera_info_topic, self._camera_info_cb, qos_camera
         )
 
-        # Synchronised RGB + Depth
-        self._rgb_sub = message_filters.Subscriber(self, Image, p.rgb_topic, qos_profile=qos_camera)
-        self._depth_sub = message_filters.Subscriber(self, Image, p.depth_topic, qos_profile=qos_camera)
-        self._sync = message_filters.ApproximateTimeSynchronizer(
-            [self._rgb_sub, self._depth_sub], queue_size=10, slop=0.05
-        )
-        self._sync.registerCallback(self._rgbd_cb)
+        needs_depth = (not self._plane_based) or p.plane_source == "depth"
+        if needs_depth:
+            # Synchronised RGB + Depth
+            self._rgb_sub = message_filters.Subscriber(self, Image, p.rgb_topic, qos_profile=qos_camera)
+            self._depth_sub = message_filters.Subscriber(self, Image, p.depth_topic, qos_profile=qos_camera)
+            self._sync = message_filters.ApproximateTimeSynchronizer(
+                [self._rgb_sub, self._depth_sub], queue_size=10, slop=0.05
+            )
+            self._sync.registerCallback(self._rgbd_cb)
+        else:
+            # RGB only (keep just the latest frame: the pipeline is slower than the camera)
+            qos_latest = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1,
+                                    reliability=QoSReliabilityPolicy.BEST_EFFORT,   # camera drivers publish best-effort
+                                    durability=QoSDurabilityPolicy.VOLATILE)
+            self._rgb_only_sub = self.create_subscription(Image, p.rgb_topic, self._rgb_cb, qos_latest)
 
         self.get_logger().info(
-            f"Listening — RGB: {p.rgb_topic} | Depth: {p.depth_topic} | "
+            f"Listening — RGB: {p.rgb_topic} | Depth: {p.depth_topic if needs_depth else '(not used)'} | "
             f"Info: {p.camera_info_topic}"
         )
 
@@ -231,9 +299,14 @@ class DieDetectorNode(Node):
         else:
             depth_m = depth_raw.astype(np.float32)
 
+        if self._plane_based:
+            self._process_frame(rgb, rgb_msg, depth_m)
+            return
+
         # Run pipeline
         try:
             result = self._pipeline.process_rgbd(rgb, depth_m)
+            result["frame_id"] = rgb_msg.header.frame_id or self._params.camera_frame_id
             self._last_result = result
         except Exception as exc:
             import traceback
@@ -274,6 +347,117 @@ class DieDetectorNode(Node):
             f"  Position (m)    : x={centroid[0]:.3f}, y={centroid[1]:.3f}, z={centroid[2]:.3f}\n"
             f"  Orientation (q) : x={quat[0]:.3f}, y={quat[1]:.3f}, z={quat[2]:.3f}, w={quat[3]:.3f}"
         )
+
+    # ──────────────────────────────────────────────────────────────────
+    def _log_stats(self) -> None:
+        s = self._stats
+        if s["received"]:
+            self.get_logger().info(f"Last 10 s: received {s['received']} frames, processed {s['processed']}, "
+                                   f"published {s['poses']} poses ({s['poses'] / 10.0:.1f} Hz)")
+        else:
+            p = self._params
+            needs_depth = (not self._plane_based) or p.plane_source == "depth"
+            topics = [p.rgb_topic] + ([p.depth_topic] if needs_depth else [])
+            status = ", ".join(f"{t} ({self.count_publishers(t)} publishers)" for t in topics)
+            self.get_logger().warn(f"No frames in the last 10 s. Waiting for: {status}"
+                                   + (" [RGB + depth must both arrive, time-synchronised]" if needs_depth else ""))
+        self._stats = {k: 0 for k in s}
+
+    def _rgb_cb(self, rgb_msg: Image) -> None:
+        """RGB-only callback (plane-based methods with a TF / fixed table plane)."""
+        try:
+            rgb = self._bridge.imgmsg_to_cv2(rgb_msg, desired_encoding="bgr8")
+        except Exception as exc:
+            self.get_logger().error(f"Image conversion failed: {exc}")
+            return
+        self._process_frame(rgb, rgb_msg, None)
+
+    def _intrinsics(self, rgb):
+        if not self._intrinsics_received and not self._warned_no_info:
+            self.get_logger().warn(f"No CameraInfo on {self._params.camera_info_topic} yet — using the "
+                                   f"fx/fy/cx/cy parameters (cx/cy default to the image centre).")
+            self._warned_no_info = True
+        h, w = rgb.shape[:2]
+        cx = self._cx if self._cx is not None else w / 2.0
+        cy = self._cy if self._cy is not None else h / 2.0
+        return np.array([[self._fx, 0.0, cx], [0.0, self._fy, cy], [0.0, 0.0, 1.0]])
+
+    def _table_plane(self, rgb, depth_m, K, rgb_msg, frame_id):
+        """Table plane in the camera optical frame as (n, h): n·X + h = 0, n up."""
+        p = self._params
+        if p.plane_source == "fixed":
+            n = np.asarray(p.plane_normal_cam, dtype=np.float64)
+            return n / np.linalg.norm(n), float(p.plane_height_m)
+        if p.plane_source == "tf":
+            try:
+                tf = self._tf_buffer.lookup_transform(frame_id, p.table_frame, rgb_msg.header.stamp,
+                                                      timeout=Duration(seconds=0.05))
+            except Exception:
+                try:   # fall back to the latest available transform
+                    tf = self._tf_buffer.lookup_transform(frame_id, p.table_frame, Time())
+                except Exception as exc:
+                    self.get_logger().warn(f"TF {p.table_frame} -> {frame_id} unavailable: {exc}",
+                                           throttle_duration_sec=2.0)
+                    return None
+            q = tf.transform.rotation
+            t = tf.transform.translation
+            R = R_sci.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+            n = R @ np.array([0.0, 0.0, 1.0])
+            p_table = R @ np.array([0.0, 0.0, p.table_height_m]) + np.array([t.x, t.y, t.z])
+            return n, float(-n @ p_table)
+        # depth: RANSAC on the aligned depth image
+        points, _, _, _ = self._pc_proc.create_point_cloud(rgb, depth_m)
+        if len(points) < 100:
+            self.get_logger().warn("Too few valid depth points for the table plane.", throttle_duration_sec=2.0)
+            return None
+        (a, b, c, d), _, _, _ = self._pc_proc.fit_plane_ransac(points)
+        n = np.array([a, b, c], dtype=np.float64)
+        scale = np.linalg.norm(n)
+        n, d = n / scale, d / scale
+        if d < 0:              # orient n towards the camera (camera height d > 0)
+            n, d = -n, -d
+        return n, float(d)
+
+    def _process_frame(self, rgb, rgb_msg, depth_m) -> None:
+        self._stats["received"] += 1
+        stamp = rgb_msg.header.stamp
+        frame_id = rgb_msg.header.frame_id or self._params.camera_frame_id
+        K = self._intrinsics(rgb)
+        plane = self._table_plane(rgb, depth_m, K, rgb_msg, frame_id)
+        if plane is None:
+            reason = {"tf": f"no TF {self._params.table_frame} -> {frame_id}",
+                      "depth": "too few depth points for the table plane"}.get(self._params.plane_source, "no table plane")
+            self._panels_pub.publish(self._to_img_msg(
+                self._pipeline.build_debug_panels(rgb, {"valid": False, "reason": reason}), stamp, frame_id))
+            return
+        try:
+            result = self._pipeline.process(rgb, K, plane[0], plane[1])
+        except Exception as exc:
+            import traceback
+            self.get_logger().error(f"Pipeline error: {exc}\n{traceback.format_exc()}")
+            return
+
+        self._stats["processed"] += 1
+        self._panels_pub.publish(self._to_img_msg(self._pipeline.build_debug_panels(rgb, result),
+                                                  stamp, frame_id))
+        t = result["timings_ms"]
+        if not result["valid"]:
+            self.get_logger().warn(f"No die pose: {result['reason']} ({t['total']:.0f} ms)",
+                                   throttle_duration_sec=1.0)
+            return
+        result["frame_id"] = frame_id
+        self._last_result = result
+        self._stats["poses"] += 1
+        centroid, quat = result["centroid"], result["quaternion"]
+        self._publish_pose(centroid, quat, stamp, frame_id)
+        self._broadcast_tf("die_top_face", centroid, quat, stamp, frame_id)
+        self._broadcast_tf("die_centroid", result["die_centroid_tf"], quat, stamp, frame_id)
+        self._publish_plane_marker(result["table_surface_tf"], quat, stamp, frame_id)
+        self.get_logger().info(
+            f"Die: top {result['top_face_str']}, front {result['front_face_str']} | "
+            f"IoU {result['iou']:.3f} ({result['source']}) | yaw {result['yaw_deg']:+.1f}° | "
+            f"xyz=({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}) m in {frame_id} | "
+            f"{t['total']:.0f} ms", throttle_duration_sec=1.0)
 
     # ──────────────────────────────────────────────────────────────────
     def _publish_pose(self, centroid, quat, stamp, frame_id) -> None:
@@ -353,7 +537,7 @@ class DieDetectorNode(Node):
         centroid = res["centroid"]
         quat = res["quaternion"]
         stamp = self.get_clock().now().to_msg()
-        frame_id = self._params.camera_frame_id
+        frame_id = res.get("frame_id", self._params.camera_frame_id)   # frame of the image it came from
 
         # Populate die_top_tf (TransformStamped)
         response.die_top_tf.header.stamp = stamp
@@ -410,7 +594,8 @@ def main(args=None) -> None:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():          # Ctrl-C under ros2 launch has already shut the context down
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

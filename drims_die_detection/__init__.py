@@ -13,7 +13,9 @@ AlignmentAndProjection  — Plane-normal-to-Z rotation and top-down crop
 PipDetector             — Adaptive threshold / blob pip counting
 PoseEstimator           — 6-DOF pose (centroid + quaternion)
 PlotlyVisualizer        — Interactive 3D HTML plots
-DieDetectorPipeline     — Full orchestration pipeline
+DieDetectorPipeline     — Full orchestration pipeline (classical, depth-based)
+SilhouettePipeline      — YOLOE + cube-silhouette pose + CNN orientation
+FacePolygonPipeline     — YOLOE (or colour) detection + face/pip polygons + top-face pose
 """
 
 from .die_detector_params import DieDetectorParams
@@ -26,6 +28,9 @@ from .pose_estimator import PoseEstimator
 from .plotly_visualizer import PlotlyVisualizer
 from .die_detector_pipeline import DieDetectorPipeline
 from .die_orientation import resolve_die_orientation
+from .cnn_die_classifier import CNNDieClassifier
+from .silhouette_pipeline import SilhouettePipeline
+from .face_polygon_pipeline import FacePolygonPipeline
 
 __all__ = [
     "DieDetectorParams",
@@ -38,4 +43,7 @@ __all__ = [
     "PlotlyVisualizer",
     "DieDetectorPipeline",
     "resolve_die_orientation",
+    "CNNDieClassifier",
+    "SilhouettePipeline",
+    "FacePolygonPipeline",
 ]

@@ -48,6 +48,7 @@ from .pip_detector import PipDetector
 from .pose_estimator import PoseEstimator
 from .plotly_visualizer import PlotlyVisualizer
 from .die_orientation import resolve_die_orientation
+from .cnn_die_classifier import CNNDieClassifier
 
 
 class DieDetectorPipeline:
@@ -70,6 +71,15 @@ class DieDetectorPipeline:
         self._pip_det = PipDetector(self.params)
         self._pose_est = PoseEstimator(self.params)
         self._plotly = PlotlyVisualizer(self.params)
+
+        model_path = getattr(self.params, "cnn_model_path", None)
+        if model_path and not os.path.isabs(model_path):
+            pkg_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+            model_path = os.path.join(pkg_root, model_path)
+        self._cnn_classifier = CNNDieClassifier(
+            model_path=model_path,
+            conf_thresh=getattr(self.params, "cnn_conf_thresh", 0.60)
+        )
 
         if self.params.debug:
             self.params.log()
@@ -127,6 +137,20 @@ class DieDetectorPipeline:
         num_visible_faces = det["num_visible_faces"]
         total_pips = det["total_pips"]
         self._log(f"Step 2: {num_visible_faces} faces, {total_pips} pips (2D).")
+
+        # ── Step 2b: CNN Die Orientation Classifier ───────────────────────
+        cnn_res = None
+        if getattr(self.params, "use_cnn_orientation", True) and w_c > 10 and h_c > 10:
+            die_crop = rgb_bgr[y_c:y_c+h_c, x_c:x_c+w_c]
+            try:
+                cnn_res = self._cnn_classifier.predict(die_crop)
+                self._log(
+                    f"Step 2b (CNN): Top={cnn_res['top_face']} ({cnn_res['top_conf']:.2f}), "
+                    f"Front={cnn_res['front_face']} ({cnn_res['front_conf']:.2f}), "
+                    f"latency={cnn_res['latency_ms']:.1f}ms"
+                )
+            except Exception as e:
+                self._log(f"Step 2b: CNN inference fallback ({e}).")
 
         # ── Step 3: RANSAC Plane on Table Surface (Excluding Die Points) ──
         px = pixel_coords[:, 0]
@@ -224,10 +248,17 @@ class DieDetectorPipeline:
             camera_params=cam_params,
         )
 
-        top_pips = top_face["num_pips"] if (top_face is not None and top_face.get("is_trusted", True)) else total_pips
-        x_pos_pips = primary_lat["num_pips"] if (primary_lat is not None and primary_lat.get("is_trusted", True)) else None
-        y_pos_pips = lat_faces[1]["num_pips"] if (len(lat_faces) >= 2 and lat_faces[1].get("is_trusted", True)) else None
-        die_orient = resolve_die_orientation(top_pips=top_pips, x_pos_pips=x_pos_pips, y_pos_pips=y_pos_pips)
+        if cnn_res is not None and cnn_res.get("top_face") is not None:
+            top_pips = cnn_res["top_face"]
+            x_pos_pips = cnn_res.get("front_face")
+            y_pos_pips = None
+            die_orient = resolve_die_orientation(top_pips=top_pips, x_pos_pips=x_pos_pips, y_pos_pips=y_pos_pips)
+            self._log(f"Step 8: Orientation resolved via CNN: Top={top_pips}, Front={x_pos_pips}")
+        else:
+            top_pips = top_face["num_pips"] if (top_face is not None and top_face.get("is_trusted", True)) else total_pips
+            x_pos_pips = primary_lat["num_pips"] if (primary_lat is not None and primary_lat.get("is_trusted", True)) else None
+            y_pos_pips = lat_faces[1]["num_pips"] if (len(lat_faces) >= 2 and lat_faces[1].get("is_trusted", True)) else None
+            die_orient = resolve_die_orientation(top_pips=top_pips, x_pos_pips=x_pos_pips, y_pos_pips=y_pos_pips)
 
         top_face_tf = centroid.copy()
         die_centroid_tf = centroid - (die_size / 2.0) * z_ax
@@ -322,6 +353,7 @@ class DieDetectorPipeline:
             "front_face_pips": front_pips,
             "top_face_valid": top_valid,
             "front_face_valid": front_valid,
+            "cnn_classification": cnn_res,
             # Detection
             "image_name": image_name,
             "pip_count": total_pips,
